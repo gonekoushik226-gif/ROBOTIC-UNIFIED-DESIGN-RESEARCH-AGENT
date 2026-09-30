@@ -1,0 +1,33 @@
+# RUDRA AI — project metadata.
+#
+# Deliberately minimal (master specification Part 1 section 15, "minimal dependency
+# principle"). There is no [build-system] table because RUDRA is run from the source
+# tree (python -m app) and is never built or installed as a wheel. Adding a build
+# backend would pull in a build-time dependency that nothing needs yet.
+#
+# Runtime dependencies: ONE, since Phase 4 - `pypdf` (decision D-03, ADR 0014).
+# Phases 1-3 used only the standard library. `pypdf` is BSD-3-Clause and pure
+# Python; it may be imported ONLY by the adapter in `app/documents/`, so the parser
+# stays replaceable (Part 1 section 4). `pymupdf` was not adopted: AGPL-3.0 would
+# constrain future distribution, for layout data Phase 4 does not consume.
+# Development dependencies: pytest only (decision D-11, approved 2026-09-20).
+# Build dependency: pyinstaller, for the Windows application only (ADR 0056). It turns
+# the unchanged source into dist/RUDRA/RUDRA.exe and is never imported by `app/`.
+
+[project]
+name = "rudra"
+version = "0.1.0"
+description = "RUDRA AI - Robotic Unified Design Research Agent (persistent knowledge, reasoning, calculation, verification and computer-control system)"
+requires-python = ">=3.12"
+dependencies = ["pypdf>=6,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+build = ["pyinstaller==6.22.3"]
+
+[tool.pytest.ini_options]
+# pythonpath lets the tests import the `app` package straight from the source tree,
+# so no build backend and no editable install are required.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"

@@ -1,0 +1,36 @@
+# With core.autocrlf=true, Git would otherwise rewrite line endings inside binary
+# files (PDFs, databases) and corrupt them.
+
+# Text files: normalised to LF in the repository, checked out natively.
+* text=auto
+
+# Source and documentation are always text with LF in the repository.
+*.py    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+# Generated vector artwork, compared byte for byte with its generator (tests/unit/test_rudra_mark.py).
+*.svg   text eol=lf
+
+# Windows-only scripts keep CRLF so they run correctly.
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary: never touch these.
+*.pdf   binary
+*.db    binary
+*.sqlite binary
+*.sqlite3 binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary
+

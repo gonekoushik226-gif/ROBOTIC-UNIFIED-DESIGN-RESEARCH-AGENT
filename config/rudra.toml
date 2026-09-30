@@ -1,0 +1,40 @@
+# RUDRA — user configuration.
+#
+# This file is OPTIONAL. If it is absent or a key is omitted, the built-in default
+# is used. Every effective value and where it came from can be inspected with:
+#
+#     python -m app config
+#
+# Precedence (later wins):   built-in defaults  ->  this file  ->  RUDRA_* env vars
+#
+# NO SECRETS BELONG IN THIS FILE. RUDRA does not use any secret today; when one is
+# ever needed it will come from the Windows credential store, never from here.
+
+config_schema_version = 1
+
+[app]
+# Free-text label shown in reports. Does not change behaviour.
+instance_name = "default"
+
+[paths]
+# All paths are relative to the project root unless given as absolute paths.
+# These directories are created at startup and are never deleted by RUDRA.
+data_root  = "data"
+logs_dir   = "logs"
+
+[logging]
+# Levels: DEBUG, INFO, WARNING, ERROR, CRITICAL, AUDIT
+# (AUDIT is a separate channel for the audit log, not a severity.)
+console_level  = "INFO"
+file_level     = "DEBUG"
+file_name      = "rudra.log"
+audit_file_name = "audit.log"
+max_bytes      = 5242880   # 5 MB per log file before rotation
+backup_count   = 3         # keep 3 rotated files, so logs cannot grow without bound
+
+[resources]
+# Startup advisories. RUDRA reports these; in Phase 1 nothing is blocked by them
+# because no large operation exists yet. Enforcement arrives with the job system.
+min_free_disk_mb  = 2048
+warn_free_disk_mb = 10240
+warn_available_ram_mb = 1024

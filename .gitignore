@@ -1,0 +1,53 @@
+# --- RUDRA data layers that must never enter version control -------------------
+# data/ holds SOURCE DATA (original user documents), PERSISTENT KNOWLEDGE
+# (databases), and REBUILDABLE artefacts (indexes, caches). Original documents may
+# be copyrighted or private; the knowledge database is machine state, not source
+# code. Both are backed up by the backup system, not by Git.
+data/
+
+# Runtime logs (including the audit log channel).
+logs/
+
+# --- Secrets (master specification Part 4 section 121, Part 6 section 22) ------
+# Secrets must never be stored in source control. RUDRA has no secrets today; these
+# patterns are here so that the first one to appear cannot be committed by accident.
+config/secrets*
+*.secret
+*.key
+*.pem
+.env
+.env.*
+
+# --- Python ---------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---------------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# --- Private files that are never published ---------------------------------------
+# Local working notes live in private/ (and in .git/info/exclude on a maintainer's machine).
+private/
+
+# User data wherever it may appear: knowledge databases, documents, backups, settings.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.pdf
+*.rudrabackup
+config/updates.json
+config/updates-*.json
