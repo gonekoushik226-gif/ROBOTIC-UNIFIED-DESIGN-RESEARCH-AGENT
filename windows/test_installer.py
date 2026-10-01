@@ -50,9 +50,26 @@ PAGE = (
 FORBIDDEN = (".db", ".db-wal", ".db-shm", ".pdf", ".log", ".rudrabackup")
 
 
+#: The program folder of the installation under test, uninstalled when a check fails, so a
+#: failed run never leaves a registered installation behind on the machine.
+_INSTALLED: list[Path] = []
+
+
+def uninstall(program: Path) -> None:
+    uninstaller = program / "unins000.exe"
+    if not uninstaller.is_file():
+        return
+    subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300)
+    deadline = time.monotonic() + 180
+    while (program / "RUDRA.exe").exists() and time.monotonic() < deadline:
+        time.sleep(1)  # the uninstaller finishes in a copy of itself
+
+
 def check(label: str, ok: bool, detail: object = "") -> None:
     print(f"  {label:<28} {'ok' if ok else 'FAILED'}  {detail}", flush=True)
     if not ok:
+        for program in _INSTALLED:
+            uninstall(program)
         sys.exit(f"Installer test FAILED at {label}.")
 
 
@@ -95,7 +112,9 @@ def main() -> None:
     from tests.unit.pdf_fixtures import make_pdf
 
     with tempfile.TemporaryDirectory(prefix="rudra-install-") as scratch:
-        base = Path(scratch)
+        # The long form of the folder: TEMP may name it in 8.3 form (C:\Users\RUNNER~1\...),
+        # while RUDRA reports the folders it uses resolved, in full.
+        base = Path(scratch).resolve()
         program = base / "Programs" / "RUDRA"
         local = base / "LocalAppData"
         local.mkdir()
@@ -109,6 +128,7 @@ def main() -> None:
             return done.returncode, done.stdout + done.stderr
 
         print("=== 1. Install", flush=True)
+        _INSTALLED.append(program)
         run_setup(args.setup, program, base / "install.log")
         installed = {p.relative_to(program).as_posix() for p in program.rglob("*") if p.is_file()}
         for required in ("RUDRA.exe", "RUDRA-CLI.exe", "LICENSE.txt", "THIRD_PARTY_NOTICES.md",
@@ -157,11 +177,8 @@ def main() -> None:
         check("still answers after upgrade", code == 0 and '"ANSWERED"' in out)
 
         print("=== 6. Uninstall keeps the user's data", flush=True)
-        uninstaller = program / "unins000.exe"
-        subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300)
-        deadline = time.monotonic() + 180
-        while (program / "RUDRA.exe").exists() and time.monotonic() < deadline:
-            time.sleep(1)  # the uninstaller finishes in a copy of itself
+        uninstall(program)
+        _INSTALLED.clear()
         check("program removed", not (program / "RUDRA.exe").exists() and not (program / "_internal").exists())
         check("data kept after uninstall", database.is_file() and digest(database) == before, data_home)
         print("\nInstaller test passed.")
