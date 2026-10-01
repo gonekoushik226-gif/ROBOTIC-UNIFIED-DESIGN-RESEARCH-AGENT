@@ -11,6 +11,7 @@ only lays out the forms, shows the results and puts writes and actions to the us
 from __future__ import annotations
 
 import ctypes
+import math
 import os
 import queue
 import sys
@@ -649,7 +650,10 @@ class OutputView:
         box = mathrender.layout(mathrender.parse(source), self.window.px(size), self._metrics,
                                 max_width=available if available > self.window.px(200) else None)
         margin = self.window.px(3)
-        canvas = tk.Canvas(self.text, width=box.width + 2 * margin, height=box.ascent + box.descent + 2 * margin,
+        # Whole pixels, rounded up: the layout measures in fractions, and Tk 9 keeps a
+        # fractional size as given, where Tk 8.6 rounded it.
+        canvas = tk.Canvas(self.text, width=math.ceil(box.width + 2 * margin),
+                           height=math.ceil(box.ascent + box.descent + 2 * margin),
                            bg=theme.OUTPUT_BG, highlightthickness=0, borderwidth=0, cursor="arrow")
         mathrender.draw_on_canvas(canvas, box, self._metrics, margin, margin + box.ascent, theme.TEXT)
         canvas.formula_source = source  # the stored text, unchanged: what the picture shows
