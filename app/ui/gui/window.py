@@ -14,12 +14,14 @@ import ctypes
 import math
 import os
 import queue
+import subprocess
 import sys
 import threading
 import tkinter as tk
 import traceback
 import webbrowser
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -47,6 +49,18 @@ from app.version import VERSION
 
 MARK_SIZES = (32, 48, 64, 96, 128, 256)
 POLL_MS = 40
+
+
+@dataclass(frozen=True)
+class VoiceResult:
+    """One dictation attempt: the recognized text, or why there is none.
+
+    `error` is `""` when the user cancelled (nothing is shown for that - it was their own
+    choice), `None` when `text` is the whole story, and a message otherwise.
+    """
+
+    text: str
+    error: str | None
 
 
 def window_icons(root: tk.Tk, ico: Path) -> tuple[int, ...]:
@@ -153,6 +167,7 @@ class RudraWindow:
         self.updates: queue.Queue[tuple[UpdateInfo | None, bool]] = queue.Queue()
         self.update_info: UpdateInfo | None = None
         self.pending_note: str | None = None
+        self.pending_import_name: str | None = None
         self.open_url: Callable[[str], object] = webbrowser.open
         self.open_path: Callable[[Path], object] = lambda path: os.startfile(path)  # noqa: S606 - the user asked
         self._pulse_on = False
@@ -281,6 +296,7 @@ class RudraWindow:
             return
         self.compact.show_result(result)
         self.full.show_result(result)
+        self.pending_import_name = None
         if result.ok:
             self.set_state(f"READY · {result.argv[0] if result.argv else 'start'} done", theme.OK)
         else:
@@ -409,6 +425,43 @@ class RudraWindow:
 
         return self.run_task(f"asking {provider}", work, done)
 
+    # -------------------------------------------------------------- voice input (dictation)
+
+    def listen(self, done: Callable[[VoiceResult], None], *, seconds: int = 12) -> Callable[[], None]:
+        """Capture one spoken utterance and hand its text (or a friendly reason it has none)
+        to `done`, on this thread. Returns a `stop()` the caller may invoke to cancel early;
+        calling it after `done` has already run does nothing.
+
+        Nothing is carried out and nothing is kept: this is dictation into a text field, the
+        same question or command the user could have typed (master specification: a user can
+        edit the recognized words before anything is sent to RUDRA).
+        """
+        from app.voice import SpeechCancelled, SpeechUnavailable, listen as voice_listen
+
+        cancel = threading.Event()
+
+        def work() -> VoiceResult:
+            try:
+                transcript = voice_listen(seconds, cancel=cancel)
+            except SpeechCancelled:
+                return VoiceResult(text="", error="")
+            except SpeechUnavailable as exc:
+                return VoiceResult(text="", error=str(exc))
+            if not transcript.text:
+                return VoiceResult(text="", error="RUDRA did not hear anything. Try again and speak soon after "
+                                                   "pressing Speak.")
+            return VoiceResult(text=transcript.text, error=None)
+
+        def finished(result: object, error: BaseException | None) -> None:
+            if error is not None:
+                done(VoiceResult(text="", error=f"RUDRA could not use the microphone: {error}"))
+                return
+            assert isinstance(result, VoiceResult)
+            done(result)
+
+        self.run_task("listening", work, finished)
+        return cancel.set
+
     def layout(self) -> PathLayout:
         """This project's folders, as the command line resolves them."""
         loaded = load_config(project_root=self.project_root)
@@ -535,6 +588,9 @@ class OutputView:
         self.explained_by = ""
         self.note_line: str | None = None
         self._metrics: mathrender.TkMetrics | None = None
+        self._extract_result: CommandResult | None = None
+        self._extract_name: str | None = None
+        self._extract_open = False
 
     def _clear_embedded(self) -> None:
         for widget in self.embedded:
@@ -546,6 +602,7 @@ class OutputView:
 
     def write(self, parts: list[tuple[str, str]]) -> None:
         self.answer = None
+        self._extract_result = None
         self._clear_embedded()
         self.text.configure(wrap="word" if self.compact else "none")
         self.text.configure(state="normal")
@@ -568,6 +625,9 @@ class OutputView:
             if document is not None and document.parts:
                 self.show_answer(document)
                 return
+        if commands.is_extract_command(result.argv):
+            self.show_extract_summary(result)
+            return
         self.write([
             (f"› {commands.display_command(result.argv)}\n\n", "cmd"),
             *((line, "answer" if commands.is_answer_line(line) else "out")
@@ -580,6 +640,58 @@ class OutputView:
 
     def text_content(self) -> str:
         return self.text.get("1.0", "end-1c")
+
+    # -------------------------------------------------------------- adding a document
+
+    def show_extract_summary(self, result: CommandResult) -> None:
+        """"Added to your knowledge base.", not a dump of `extract`'s own technical report -
+        that stays one click away behind Details, exactly as RUDRA produced it."""
+        self.answer = None
+        self._extract_result = result
+        self._extract_name = self.window.pending_import_name  # read only: both views need it
+        self._extract_open = False
+        self._render_extract()
+
+    def _render_extract(self) -> None:
+        result = self._extract_result
+        if result is None:
+            return
+        summary = commands.extract_summary(result)
+        self._clear_embedded()
+        self.text.configure(state="normal", wrap="word")
+        self.text.delete("1.0", "end")
+        if self._extract_name:
+            self.text.insert("end", self._extract_name + "\n", "a_request")
+        self.text.insert("end", summary.headline + "\n", "a_line" if summary.ok else "a_warn")
+        extra = []
+        if summary.pages:
+            extra.append(summary.pages)
+        if summary.ocr_count:
+            extra.append(f"{summary.ocr_count} page(s) read by OCR - that text is marked uncertain")
+        if summary.issue_total:
+            extra.append(f"{summary.issue_total} extraction warning(s)")
+        if extra:
+            self.text.insert("end", " · ".join(extra) + "\n", "a_extra")
+        button = ttk.Button(self.text, text="Hide details" if self._extract_open else "Details",
+                            command=self.toggle_extract_details)
+        self.embedded.append(button)
+        self.text.window_create("end", window=button, padx=self.window.px(2), pady=self.window.px(6))
+        self.text.insert("end", "\n", "a_line")
+        if self._extract_open:
+            self.text.insert("end", f"› {commands.display_command(result.argv)}\n\n", "cmd")
+            for line in result.stdout.splitlines(keepends=True):
+                self.text.insert("end", line, "answer" if commands.is_answer_line(line) else "out")
+            if result.stderr:
+                self.text.insert("end", ("\n" if result.stdout and not result.stdout.endswith("\n") else "")
+                                 + result.stderr, "log" if result.ok else "err")
+            self.text.insert("end", f"\n{'ok' if result.ok else f'exit {result.exit_code}'} · {result.meaning} · "
+                             f"{result.seconds:.2f} s\n", "meta")
+        self.text.configure(state="disabled")
+        self.text.see("1.0")
+
+    def toggle_extract_details(self) -> None:
+        self._extract_open = not self._extract_open
+        self._render_extract()
 
     # -------------------------------------------------------------- answers
 
@@ -789,6 +901,40 @@ class UpdateBanner:
             self.window.open_url(info.url)
 
 
+class MicButton:
+    """Speak a question or command instead of typing it (master specification: click, speak,
+    edit, send - no dependency beyond Windows' own speech engine, already used by `voice`).
+
+    One click starts listening; the button's own label becomes the way to stop early. The
+    recognized words replace the text wherever `insert` puts them - never sent by themselves.
+    """
+
+    def __init__(self, window: RudraWindow, parent: tk.Misc, insert: Callable[[str], None], *,
+                 idle: str = "Speak"):
+        self.window = window
+        self.insert = insert
+        self.idle = idle
+        self._stop: Callable[[], None] | None = None
+        self.button = ttk.Button(parent, text=idle, command=self._clicked)
+
+    def _clicked(self) -> None:
+        if self._stop is not None:
+            self._stop()
+            return
+        if self.window.busy:
+            return
+        self.button.configure(text="Listening… (click to stop)")
+        self._stop = self.window.listen(self._done)
+
+    def _done(self, result: VoiceResult) -> None:
+        self._stop = None
+        self.button.configure(text=self.idle)
+        if result.text:
+            self.insert(result.text)
+        elif result.error:
+            self.window.show_note(result.error, tag="warn")
+
+
 def _status_row(window: RudraWindow, parent: tk.Misc, bg: str) -> tuple[tk.Label, tk.Label]:
     dot = tk.Label(parent, text="●", bg=bg, fg=theme.OK, font=window.fonts.small)
     dot.pack(side="left")
@@ -845,8 +991,10 @@ class CompactView:
         self.entry = ttk.Entry(entry_row, font=fonts.body)
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", lambda _event: self.send())
+        self.mic = MicButton(window, entry_row, self._dictated)
+        self.mic.button.pack(side="left", padx=(px(6), 0))
         send = ttk.Button(entry_row, text="Send", style="Accent.TButton", command=self.send)
-        send.pack(side="left", padx=(px(8), 0))
+        send.pack(side="left", padx=(px(6), 0))
         window.run_controls.append(send)
 
         options = tk.Frame(self.frame, bg=theme.BG)
@@ -860,6 +1008,13 @@ class CompactView:
 
     def show_project(self) -> None:
         self.project.configure(text=f"project  {_short(self.window.project_root, 34)}")
+
+    def _dictated(self, text: str) -> None:
+        """Recognized speech replaces the entry's text; the user can still edit it before Send."""
+        self.entry.delete(0, "end")
+        self.entry.insert(0, text)
+        self.entry.focus_set()
+        self.entry.icursor("end")
 
     def send(self) -> bool:
         text = self.entry.get()
@@ -987,12 +1142,13 @@ class FullView:
 
         self.pages: dict[str, Page] = {}
         self.nav: dict[str, NavItem] = {}
-        for number, page_class in enumerate(PAGES, start=1):
+        for page_class in PAGES:
             page = page_class(self, holder)
             page.frame.grid(row=0, column=0, sticky="nsew")
-            code = f"{number:02d}"
             self.pages[page.key] = page
-            item = NavItem(self, nav, code, page.title, page.key)
+            if page_class.hidden:
+                continue
+            item = NavItem(self, nav, f"{len(self.nav) + 1:02d}", page.title, page.key)
             item.frame.pack(fill="x")
             self.nav[page.key] = item
         self._project_panel(sidebar)
@@ -1057,10 +1213,12 @@ class FullView:
         page.frame.tkraise()
         for name, item in self.nav.items():
             item.set_active(name == key)
-        self.page_code.configure(text=f"{list(self.pages).index(key) + 1:02d}  /  {theme.spaced(page.title)}")
+        code = f"{list(self.nav).index(key) + 1:02d}" if key in self.nav else "·"
+        self.page_code.configure(text=f"{code}  /  {theme.spaced(page.title)}")
         self.page_title.configure(text=page.heading)
         self.page_text.configure(text=page.description)
         self.selected = key
+        page.focus()
 
     def focus(self) -> None:
         self.pages[self.selected].focus()
@@ -1090,6 +1248,9 @@ class Page:
     title = ""
     heading = ""
     description = ""
+    #: True for a page kept fully working (and reachable by `FullView.select`) but not given
+    #: its own sidebar entry, because Settings now gives the same capability a simpler home.
+    hidden = False
 
     def __init__(self, view: FullView, parent: tk.Misc):
         self.view = view
@@ -1155,29 +1316,39 @@ class StatusPage(Page):
 class AskPage(Page):
     key, title = "ask", "Ask"
     heading = "Ask RUDRA"
-    description = ("A question or request in plain English. RUDRA's interpreter is rule-based: it answers from "
-                   "stored knowledge, calculation and rules, and reports anything it does not understand as "
-                   "unrecognized - it never guesses.")
+    description = ("Ask a question, ask RUDRA to calculate something, or tell it what to do - in plain English, "
+                   "typed or spoken. RUDRA answers from your own documents and its own deterministic engines; "
+                   "it never guesses, and it says so when it does not understand or does not have enough to go on.")
 
     def build(self) -> None:
         px = self.window.px
         self.label(self.frame, "Question or request").pack(anchor="w", pady=(px(8), px(4)))
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(fill="x")
-        self.field, self.question = self.entry(row, width=70)
+        self.field, self.question = self.entry(row, width=64)
         self.field.pack(side="left", fill="x", expand=True)
         self.field.bind("<Return>", lambda _event: self.run())
-        self.button(row, "Ask", self.run, accent=True).pack(side="left", padx=(px(8), 0))
+        self.mic = MicButton(self.window, row, self._dictated)
+        self.mic.button.pack(side="left", padx=(px(6), 0))
+        self.button(row, "Ask", self.run, accent=True).pack(side="left", padx=(px(6), 0))
         self.first = self.field
+        self.note(self.frame, "For example: What is resistance?  ·  Which equations are associated with "
+                              "resistance?  ·  Calculate I given I = V / R, V = 10 V and R = 5 Ω."
+                  ).pack(fill="x", pady=(px(10), 0))
         options = tk.Frame(self.frame, bg=theme.BG)
-        options.pack(fill="x", pady=(px(10), 0))
+        options.pack(fill="x", pady=(px(14), 0))
+        self.label(options, "Advanced").pack(anchor="w")
         ttk.Checkbutton(options, text="Act on this computer (otherwise an action request runs on the simulated "
-                                      "computer)", variable=self.window.act).pack(anchor="w")
+                                      "computer)", variable=self.window.act).pack(anchor="w", pady=(px(4), 0))
         ttk.Checkbutton(options, text="Confirm medium-risk steps (--confirm)",
                         variable=self.window.confirm_medium).pack(anchor="w", pady=(px(2), 0))
-        self.note(self.frame, "Actions always pass RUDRA's permission check; high-risk actions are not enabled. "
-                              "Examples: What is resistance?  ·  Which equations are associated with resistance?"
-                  ).pack(fill="x", pady=(px(12), 0))
+        self.note(options, "Actions always pass RUDRA's permission check; high-risk actions are not enabled."
+                  ).pack(fill="x", pady=(px(4), 0))
+
+    def _dictated(self, text: str) -> None:
+        self.question.set(text)
+        self.field.focus_set()
+        self.field.icursor("end")
 
     def run(self) -> bool:
         return self.window.run_form(lambda: commands.ask(self.question.get(), act=self.window.act.get(),
@@ -1217,46 +1388,6 @@ class LookupPage(Page):
         return self.window.run_form(lambda: ["index"])
 
 
-class CalculatePage(Page):
-    key, title = "calculate", "Calculate"
-    heading = "Calculate"
-    description = ("Exact rational arithmetic with SI units and dimension checks. The formulas are yours, or one "
-                   "stored equation you admit - RUDRA never chooses a formula. Results are returned with every "
-                   "step, never stored, and marked PENDING verification.")
-
-    def build(self) -> None:
-        px = self.window.px
-        grid = tk.Frame(self.frame, bg=theme.BG)
-        grid.pack(fill="both", expand=True, pady=(px(6), 0))
-        grid.grid_columnconfigure(1, weight=1)
-        grid.grid_columnconfigure(3, weight=1)
-        self.label(grid, "Target").grid(row=0, column=0, sticky="w", pady=px(4))
-        self.target_field, self.target = self.entry(grid, "I", width=12)
-        self.target_field.grid(row=0, column=1, sticky="w", pady=px(4), padx=(px(10), px(20)))
-        self.label(grid, "Admit K-ID").grid(row=0, column=2, sticky="w")
-        admit_field, self.admit = self.entry(grid, width=18)
-        admit_field.grid(row=0, column=3, sticky="w", padx=(px(10), 0))
-        self.label(grid, "Formulas").grid(row=1, column=0, sticky="nw", pady=px(4))
-        self.formulas = self.text(grid, "I = V / Rtotal\nRtotal = R1 + R2", lines=3)
-        self.formulas.grid(row=1, column=1, sticky="nsew", pady=px(4), padx=(px(10), px(20)))
-        self.label(grid, "Inputs").grid(row=1, column=2, sticky="nw", pady=px(4))
-        self.inputs = self.text(grid, "R1=10 Ω\nR2=20 Ω\nV=10 V", lines=3)
-        self.inputs.grid(row=1, column=3, sticky="nsew", pady=px(4), padx=(px(10), 0))
-        self.label(grid, "Assumptions").grid(row=2, column=0, sticky="nw", pady=px(4))
-        self.assumptions = self.text(grid, "", lines=1)
-        self.assumptions.grid(row=2, column=1, sticky="ew", pady=px(4), padx=(px(10), px(20)))
-        run = self.button(grid, "Calculate", self.run, accent=True)
-        run.grid(row=2, column=3, sticky="e", pady=px(4))
-        self.note(self.frame, "One formula, input or assumption per line: SYMBOL = EXPRESSION with + - * / ^ and "
-                              "parentheses; SYMBOL=VALUE with at most one unit.").pack(fill="x", pady=(px(8), 0))
-        self.first = self.target_field
-
-    def run(self) -> bool:
-        return self.window.run_form(lambda: commands.calculate(
-            self.target.get(), self.formulas.get("1.0", "end"), self.inputs.get("1.0", "end"),
-            self.assumptions.get("1.0", "end"), self.admit.get()))
-
-
 class ProvenancePage(Page):
     key, title = "provenance", "Provenance"
     heading = "Where did this come from?"
@@ -1283,11 +1414,11 @@ class ProvenancePage(Page):
 
 
 class ImportPage(Page):
-    key, title = "import", "Import"
-    heading = "Import a document"
-    description = ("Import a document - PDF, Word, PowerPoint, Excel, EPUB, HTML, Markdown, text, CSV, RTF, or a "
-                   "scanned image - and extract its knowledge, with the location of every statement. Both buttons "
-                   "write to this project's knowledge database, so each is put to you first.")
+    key, title = "import", "Add document"
+    heading = "Add a document to your knowledge"
+    description = ("Choose a PDF, Word, PowerPoint, Excel, EPUB, HTML, Markdown, text, CSV, RTF file, or a scanned "
+                   "image. RUDRA reads it, keeps a copy, and adds what it finds - with the exact page and quote "
+                   "behind every statement - so you can ask about it right away.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1298,16 +1429,20 @@ class ImportPage(Page):
         self.field.pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Browse…", command=self.browse).pack(side="left", padx=(px(8), 0))
         self.first = self.field
-        self.label(self.frame, "Manual of application (optional)").pack(anchor="w", pady=(px(12), px(4)))
-        manual_field, self.manual = self.entry(self.frame, width=30)
-        manual_field.pack(anchor="w")
-        buttons = tk.Frame(self.frame, bg=theme.BG)
-        buttons.pack(fill="x", pady=(px(14), 0))
-        self.button(buttons, "Import document", self.run, accent=True).pack(side="left")
-        self.button(buttons, "Create or upgrade database", self.database).pack(side="left", padx=(px(8), 0))
+        self.button(self.frame, "Add document", self.run, accent=True).pack(anchor="w", pady=(px(14), 0))
         self.note(self.frame, "Scanned pages and images are read with Windows' own OCR engine, on this computer. "
-                              "Text read by OCR is marked as such and every statement from it is flagged "
-                              "uncertain.").pack(fill="x", pady=(px(12), 0))
+                              "Text read that way is marked and treated as uncertain, never as a sure statement."
+                  ).pack(fill="x", pady=(px(12), 0))
+        advanced = tk.Frame(self.frame, bg=theme.BG)
+        advanced.pack(fill="x", pady=(px(18), 0))
+        self.label(advanced, "Advanced").pack(anchor="w")
+        self.label(advanced, "Manual of application (optional)").pack(anchor="w", pady=(px(8), px(4)))
+        manual_field, self.manual = self.entry(advanced, width=30)
+        manual_field.pack(anchor="w")
+        self.button(advanced, "Set up or upgrade the knowledge database only", self.database).pack(
+            anchor="w", pady=(px(10), 0))
+        self.note(advanced, "Adding a document already does this automatically the first time; use this only to "
+                            "prepare the database before adding anything.").pack(fill="x", pady=(px(4), 0))
 
     def browse(self) -> None:
         from app.documents.formats import SUPPORTED_EXTENSIONS
@@ -1320,6 +1455,7 @@ class ImportPage(Page):
             self.pdf.set(str(Path(chosen)))
 
     def run(self) -> bool:
+        self.window.pending_import_name = Path(self.pdf.get()).name if self.pdf.get().strip() else None
         return self.window.run_form(lambda: commands.extract(self.pdf.get(), self.manual.get()), approve=True)
 
     def database(self) -> bool:
@@ -1354,7 +1490,8 @@ class HelpPage(Page):
     key, title = "help", "Help"
     heading = "Help and documents"
     description = ("The command reference and RUDRA's own documents. docs/LIMITATIONS.md says, subsystem by "
-                   "subsystem, what is implemented, partially implemented or not implemented.")
+                   "subsystem, what is implemented, partially implemented or not implemented. Updates, voice and "
+                   "other maintenance are on the Settings page.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1365,29 +1502,10 @@ class HelpPage(Page):
         self.first = reference
         for title in commands.DOCUMENTS:
             ttk.Button(row, text=title, command=lambda t=title: self.document(t)).pack(side="left", padx=(px(8), 0))
-        updates = tk.Frame(self.frame, bg=theme.BG)
-        updates.pack(anchor="w", pady=(px(12), 0))
-        ttk.Button(updates, text="Check for Updates", command=self.check_updates).pack(side="left")
-        self.automatic = tk.BooleanVar(master=self.window.root, value=self._automatic())
-        ttk.Checkbutton(updates, text="Check automatically (at most once a day)", variable=self.automatic,
-                        command=self.set_automatic).pack(side="left", padx=(px(12), 0))
         self.note(self.frame, f"RUDRA {VERSION}. The window runs the command line's own commands and "
                               "shows their output unchanged; from a terminal the same commands run as "
-                              "python -m app <command> (RUDRA-CLI.exe when packaged). The update check "
-                              "reads only GitHub's public release information for RUDRA and sends nothing "
-                              "about you or your knowledge.").pack(fill="x", pady=(px(14), 0))
-
-    def _automatic(self) -> bool:
-        try:
-            return self.window.update_checker().enabled
-        except OSError:
-            return True
-
-    def set_automatic(self) -> None:
-        self.window.update_checker().set_enabled(self.automatic.get())
-
-    def check_updates(self) -> None:
-        self.window.check_for_updates(manual=True)
+                              "python -m app <command> (RUDRA-CLI.exe when packaged).").pack(
+            fill="x", pady=(px(14), 0))
 
     def reference(self) -> bool:
         return self.window.run_form(lambda: list(commands.HELP_ARGUMENTS))
@@ -1398,6 +1516,8 @@ class HelpPage(Page):
 
 class BackupPage(Page):
     key, title = "backup", "Backup"
+    hidden = True  # Settings offers Export/Import with one click each; this page's own
+    # methods do the work either way, so nothing here is duplicated.
     heading = "Back up and restore your knowledge"
     description = ("Export writes your whole knowledge base - the knowledge database and the documents it came "
                    "from - to one .rudrabackup file you can keep on a USB drive or another disk. Import restores "
@@ -1505,6 +1625,7 @@ class BackupPage(Page):
 
 class AiPage(Page):
     key, title = "ai", "AI (optional)"
+    hidden = True  # reached from Settings > Optional AI assistance; fully working either way.
     heading = "Optional AI assistance"
     description = ("RUDRA answers from your own documents and works without AI. If you choose, an external "
                    "provider can help with language: interpreting a question RUDRA's own grammar does not "
@@ -1640,5 +1761,144 @@ class AiPage(Page):
         self.window.show_note("AI assistance is off. RUDRA uses only its own, local processing.", tag="meta")
 
 
-PAGES = (StatusPage, AskPage, LookupPage, CalculatePage, ProvenancePage, ImportPage, BackupPage, AiPage,
+class SettingsPage(Page):
+    """The home for maintenance (master specification): updates, voice, backup, restore,
+    optional AI and uninstalling, in one place - not scattered as separate top-level pages.
+
+    Backup and AI keep their own, fully working pages (`BackupPage`, `AiPage`); this page
+    either calls their methods directly (Export/Import, one click each) or opens them with
+    `view.select` for the few things that need more than one field (choosing an AI provider
+    and model). Nothing here is a second implementation of either.
+    """
+
+    key, title = "settings", "Settings"
+    heading = "Settings"
+    description = ("Updates, voice input, backing up and restoring your knowledge, optional AI assistance, and "
+                   "uninstalling RUDRA. Diagnostics and every other command are under Advanced in the sidebar.")
+
+    def build(self) -> None:
+        px = self.window.px
+
+        def section(text: str, *, first: bool = False) -> None:
+            if not first:
+                tk.Frame(self.frame, bg=theme.LINE, height=1).pack(fill="x", pady=(px(16), px(8)))
+            self.label(self.frame, text).pack(anchor="w")
+
+        section("Application", first=True)
+        general = tk.Frame(self.frame, bg=theme.BG)
+        general.pack(fill="x", pady=(px(8), 0))
+        check = self.button(general, "Check for updates", self.check_updates, accent=True)
+        check.pack(side="left")
+        self.first = check
+        self.automatic = tk.BooleanVar(master=self.window.root, value=self._automatic_updates())
+        ttk.Checkbutton(general, text="Check automatically (at most once a day)", variable=self.automatic,
+                        command=self.set_automatic_updates).pack(side="left", padx=(px(12), 0))
+
+        section("Voice / input")
+        voice = tk.Frame(self.frame, bg=theme.BG)
+        voice.pack(fill="x", pady=(px(8), 0))
+        self.mic = MicButton(self.window, voice, self._heard, idle="Test microphone")
+        self.mic.button.pack(side="left")
+        self.mic_status = tk.Label(voice, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label, anchor="w")
+        self.mic_status.pack(side="left", padx=(px(10), 0))
+        self.note(self.frame, "The same microphone button appears beside Ask's question field, to dictate instead "
+                              "of typing.").pack(fill="x", pady=(px(4), 0))
+
+        section("Data")
+        data = tk.Frame(self.frame, bg=theme.BG)
+        data.pack(fill="x", pady=(px(8), 0))
+        self.button(data, "Back up your knowledge", self.backup, accent=True).pack(side="left")
+        self.button(data, "Restore from a backup", self.restore).pack(side="left", padx=(px(8), 0))
+        self.note(self.frame, "A backup is one file with everything you've added to RUDRA - keep it on a USB "
+                              "drive or another disk. Restoring asks first and keeps what is currently here "
+                              "(in the backups folder) rather than deleting it.").pack(fill="x", pady=(px(4), 0))
+
+        section("Optional AI assistance")
+        self.ai_status = tk.Label(self.frame, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.body, anchor="w")
+        self.ai_status.pack(fill="x", pady=(px(8), 0))
+        self.button(self.frame, "Manage AI assistance…", self.open_ai).pack(anchor="w", pady=(px(8), 0))
+
+        section("Application management")
+        ttk.Button(self.frame, text="Uninstall RUDRA…", command=self.uninstall).pack(anchor="w", pady=(px(8), 0))
+        self.note(self.frame, "This runs Windows' own uninstaller for RUDRA - the same one Settings > Apps would "
+                              "use. Your knowledge base lives in your user profile and is kept either way."
+                  ).pack(fill="x", pady=(px(4), 0))
+
+        # Dialogs, replaceable for tests.
+        self.ask_yes: Callable[[str, str], bool] = lambda title, message: messagebox.askyesno(
+            title, message, icon="warning", parent=self.window.root)
+        self.show_info: Callable[[str, str], None] = lambda title, message: messagebox.showinfo(
+            title, message, parent=self.window.root)
+        self.show_error: Callable[[str, str], None] = lambda title, message: messagebox.showerror(
+            title, message, parent=self.window.root)
+        self.start_uninstaller: Callable[[str], object] = subprocess.Popen
+        self.quit: Callable[[], object] = self.window.root.destroy
+        self.refresh()
+
+    def focus(self) -> None:
+        self.refresh()
+        super().focus()
+
+    def refresh(self) -> None:
+        settings = self.window.ai()
+        if settings.active and settings.provider in PROVIDERS:
+            self.ai_status.configure(text=f"On: {PROVIDERS[settings.provider].name}.", fg=theme.OK)
+        else:
+            self.ai_status.configure(text="Off. RUDRA uses only its own, local processing.", fg=theme.MUTED)
+
+    # ---- Application
+
+    def _automatic_updates(self) -> bool:
+        try:
+            return self.window.update_checker().enabled
+        except OSError:
+            return True
+
+    def set_automatic_updates(self) -> None:
+        self.window.update_checker().set_enabled(self.automatic.get())
+
+    def check_updates(self) -> None:
+        self.window.check_for_updates(manual=True)
+
+    # ---- Voice / input
+
+    def _heard(self, text: str) -> None:
+        self.mic_status.configure(text=f'Heard: "{text}"', fg=theme.OK)
+
+    # ---- Data (delegates to BackupPage's own, fully tested methods)
+
+    def backup(self) -> bool:
+        return self.view.pages["backup"].export()
+
+    def restore(self) -> bool:
+        return self.view.pages["backup"].restore()
+
+    # ---- Optional AI
+
+    def open_ai(self) -> None:
+        self.view.select("ai")
+
+    # ---- Application management
+
+    def uninstall(self) -> None:
+        command = commands.find_uninstaller()
+        if command is None:
+            self.show_info("Uninstall RUDRA",
+                           "RUDRA does not see an installation to uninstall here - this may be a copy run from "
+                           "source. If RUDRA was installed with its installer, use Windows Settings > Apps.")
+            return
+        if not self.ask_yes("Uninstall RUDRA",
+                            "This starts Windows' own uninstaller for RUDRA - the same one Settings > Apps would "
+                            "use - and RUDRA will close.\n\nYour knowledge base lives in your user profile and is "
+                            "not removed by uninstalling the program.\n\nContinue?"):
+            return
+        try:
+            self.start_uninstaller(command)
+        except OSError as exc:
+            self.show_error("Uninstall RUDRA", f"RUDRA could not start the uninstaller.\n\n{exc}")
+            return
+        self.quit()
+
+
+PAGES = (StatusPage, AskPage, LookupPage, ProvenancePage, ImportPage, SettingsPage, BackupPage, AiPage,
          CommandPage, HelpPage)

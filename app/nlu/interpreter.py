@@ -45,6 +45,7 @@ MAX_TEXT = 2000
 _NUMBER = r"[-−]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
 _SYMBOL = re.compile(r"[^\W\d_]\w*")
 _VALUE = re.compile(rf"(?P<number>{_NUMBER})\s*(?P<unit>[^\s,;]+)?")
+_IS_ASSIGNMENT = re.compile(r"^(?P<left>.+?)\s+is\s+(?P<right>.+)$", re.IGNORECASE)
 _ARITHMETIC = re.compile(r"[0-9\s.eE+\-−*/×÷·^()]+")
 _OPERATOR = re.compile(r"[+\-−*/×÷·^]")
 _REFERENCES = ("it", "this", "that", "these", "those", "them")
@@ -144,6 +145,15 @@ def _query(rule: str, target_text: str, output: str | None, cls: str = "KNOWLEDG
                    constraints=() if scope is None else (f"source scope {scope}",))
 
 
+def _as_assignment(piece: str) -> str:
+    """"R1 is 10 ohms" read the same as "R1 = 10 ohms" (natural phrasing, section 207: the
+    words are read exactly as given - "is" is as explicit an assignment as "=" here)."""
+    if "=" in piece:
+        return piece
+    match = _IS_ASSIGNMENT.match(piece)
+    return f"{match['left'].strip()} = {match['right'].strip()}" if match else piece
+
+
 def _calculation(rule: str, target_text: str, given: str | None) -> StructuredIntent:
     """A calculation request: complete when the text states a symbol, formulas and values."""
     target_text = target_text.strip()
@@ -152,7 +162,7 @@ def _calculation(rule: str, target_text: str, given: str | None) -> StructuredIn
     unreadable: list[str] = []
     if given:
         for piece in (p.strip() for p in re.split(r"\s*(?:,|;|\band\b)\s*", given) if p.strip()):
-            left, sep, right = piece.partition("=")
+            left, sep, right = _as_assignment(piece).partition("=")
             left, right = left.strip(), right.strip()
             if not sep or not _SYMBOL.fullmatch(left) or not right:
                 unreadable.append(piece)
@@ -446,7 +456,9 @@ def _project(name: str | None, application: str | None) -> StructuredIntent:
 def _calculate_verb(rest: str) -> StructuredIntent | None:
     if re.match(r"^(?:everything|all)\b", rest, re.IGNORECASE):
         return None
-    split = re.match(r"^(?P<target>.+?)\s*,?\s+(?:given|where|with|if|using|when)\s+(?P<given>.*=.*)$", rest, re.IGNORECASE)
+    # The given clause need not itself contain "=": "if R1 is 10 ohms" is as explicit as
+    # "if R1 = 10 ohms" (_as_assignment reads it the same way, piece by piece).
+    split = re.match(r"^(?P<target>.+?)\s*,?\s+(?:given|where|with|if|using|when)\s+(?P<given>.+)$", rest, re.IGNORECASE)
     if split:
         return _calculation("calculate.verb", split["target"], split["given"])
     return _calculation("calculate.verb", rest, None)

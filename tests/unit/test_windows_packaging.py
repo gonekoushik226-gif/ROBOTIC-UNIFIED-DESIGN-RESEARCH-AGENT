@@ -229,10 +229,22 @@ def test_the_installer_is_per_user_and_keeps_user_data_apart():
     assert r'Source: "..\dist\RUDRA\*"' in script and r'Source: "..\LICENSE"' in script
     assert r'Source: "..\THIRD_PARTY_NOTICES.md"' in script and r'Source: "..\build\licenses\*"' in script
     assert 'Tasks: desktopicon' in script and "Flags: unchecked" in script  # the desktop shortcut is optional
+    # ... offered as an unchecked "Create a desktop shortcut" box, and it starts the installed RUDRA.exe.
+    assert ('Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; '
+            'GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked') in script
+    assert r'Name: "{autodesktop}\{#AppName}"; Filename: "{app}\RUDRA.exe"; Tasks: desktopicon' in script
     assert r'Name: "{group}\{#AppName}"; Filename: "{app}\RUDRA.exe"' in script  # Start Menu
     # The installer never touches the user's data: nothing is written to or deleted from it.
     assert "[UninstallDelete]" not in script and r"localappdata}\rudra" not in script.lower()
     assert r'Type: filesandordirs; Name: "{app}\_internal"' in script  # only the program's own runtime
+
+
+def test_the_installer_test_recognizes_an_installed_rudra():
+    from windows import test_installer
+
+    script = (PROJECT_ROOT / "installer" / "RUDRA.iss").read_text(encoding="utf-8")
+    app_id = script.split("AppId={", 1)[1].split("\n", 1)[0]  # "{{...}" in the script is "{...}"
+    assert test_installer.UNINSTALL_KEY.endswith("\\" + app_id + "_is1")
 
 
 def test_the_release_names_its_files_as_published():

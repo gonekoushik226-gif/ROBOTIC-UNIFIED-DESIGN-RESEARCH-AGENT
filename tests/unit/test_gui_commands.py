@@ -205,3 +205,92 @@ def test_the_marks_and_the_icon_are_where_the_window_looks():
     for name in ("rudra.ico", *(f"rudra-{size}.png" for size in (32, 48, 64, 96, 128, 256))):
         assert commands.asset(name).is_file(), name
     assert commands.asset("rudra.ico").parent == Path(commands.__file__).resolve().parent / "assets"
+
+
+# ---------------------------------------------------------------- plain-language summaries ("Add document")
+
+
+def test_failure_headline_reads_the_commands_own_plain_english_summary(tmp_path):
+    result = commands.run(["extract", str(tmp_path / "missing.pdf")], tmp_path)
+    assert not result.ok
+    assert commands.failure_headline(result) == "That file does not exist."
+
+
+def test_failure_headline_falls_back_when_there_is_no_structured_report(tmp_path):
+    result = commands.run(["no-such-command"], tmp_path)
+    assert commands.failure_headline(result) == f"RUDRA could not complete this (exit 2: {commands.exit_meaning(2)})."
+
+
+def test_is_extract_command():
+    assert commands.is_extract_command(["extract", "a.pdf"])
+    assert not commands.is_extract_command(["ask", "x", "--json"])
+    assert not commands.is_extract_command([])
+
+
+def test_extract_summary_for_a_fresh_document(tmp_path):
+    from tests.unit.pdf_fixtures import textbook_pdf
+
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(textbook_pdf())
+    result = commands.run(commands.extract(str(pdf)), tmp_path)
+    assert result.ok
+    summary = commands.extract_summary(result)
+    assert summary.ok and not summary.already_had and not summary.partially_processed
+    assert summary.document_id and summary.document_id.startswith("DOC-")
+    assert summary.pages == "4 pages"
+    assert summary.issue_total == 0
+    assert summary.headline == "Added to your knowledge base."
+
+
+def test_extract_summary_for_an_already_ingested_document(tmp_path):
+    from tests.unit.pdf_fixtures import textbook_pdf
+
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(textbook_pdf())
+    commands.run(commands.extract(str(pdf)), tmp_path)
+    second = commands.run(commands.extract(str(pdf)), tmp_path)
+    summary = commands.extract_summary(second)
+    assert second.ok and summary.already_had
+    assert summary.headline == "This document is already in your knowledge base."
+
+
+def test_extract_summary_for_a_failure(tmp_path):
+    result = commands.run(commands.extract(str(tmp_path / "missing.pdf")), tmp_path)
+    assert not result.ok
+    summary = commands.extract_summary(result)
+    assert not summary.ok and summary.document_id is None
+    assert summary.headline == "That file does not exist."
+
+
+# ---------------------------------------------------------------- uninstalling
+
+
+def test_find_uninstaller_reads_the_inno_setup_registry_entry(monkeypatch):
+    import winreg
+
+    class FakeKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def fake_open_key(hive, path):
+        assert hive == winreg.HKEY_CURRENT_USER
+        assert path == rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{commands.RUDRA_APP_ID}_is1"
+        return FakeKey()
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open_key)
+    monkeypatch.setattr(winreg, "QueryValueEx",
+                        lambda key, name: (r'"C:\Users\x\AppData\Local\Programs\RUDRA\unins000.exe"', 1))
+    assert commands.find_uninstaller() == r'"C:\Users\x\AppData\Local\Programs\RUDRA\unins000.exe"'
+
+
+def test_find_uninstaller_is_none_when_rudra_was_not_installed_by_it(monkeypatch):
+    import winreg
+
+    def fake_open_key(hive, path):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open_key)
+    assert commands.find_uninstaller() is None

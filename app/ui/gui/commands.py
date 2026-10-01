@@ -17,6 +17,7 @@ import argparse
 import contextlib
 import ctypes
 import io
+import re
 import shlex
 import subprocess
 import sys
@@ -110,6 +111,89 @@ def startup_summary(result: CommandResult) -> str:
     attention = [line.strip() for line in lines if line.startswith("  [")]
     summary += ["Attention:", *(f"  {line}" for line in attention)] if attention else ["Nothing needs attention."]
     return "\n".join(summary)
+
+
+#: Printed by `_print_failure` (app.ui.cli.main) before every `RudraError`'s own report;
+#: the line after it is always `FailureReport.summary` - the one-line, plain-English
+#: statement of what went wrong (Part 4 section 136). Relied on here, not duplicated.
+_FAILURE_BANNER = "RUDRA could not continue. ["
+
+
+def failure_headline(result: CommandResult) -> str:
+    """The plain-English first line of a failed command's own report, for a normal user.
+
+    The rest of `result.stderr` (Reason, Stage, Missing, Next options - still in plain
+    English, just more detailed) belongs behind a "Details" disclosure, not in the headline.
+    """
+    lines = result.stderr.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(_FAILURE_BANNER) and index + 1 < len(lines):
+            return lines[index + 1].strip()
+    return f"RUDRA could not complete this (exit {result.exit_code}: {result.meaning})."
+
+
+def is_extract_command(argv: list[str] | tuple[str, ...]) -> bool:
+    """Adding a document (`extract`): the window shows a plain summary, detail on request."""
+    return bool(argv) and argv[0] == "extract"
+
+
+@dataclass(frozen=True)
+class ExtractSummary:
+    """What `extract`'s own report means for someone who just wants their document added."""
+
+    ok: bool
+    already_had: bool
+    document_id: str | None
+    pages: str | None
+    ocr_count: int
+    issue_total: int
+    partially_processed: bool
+    headline: str
+
+
+def _field(lines: list[str], prefix: str) -> str | None:
+    return next((line[len(prefix):].strip() for line in lines if line.startswith(prefix)), None)
+
+
+def extract_summary(result: CommandResult) -> ExtractSummary:
+    """`extract`'s own plain-English report (app.ui.cli.main._cmd_extract), read for the
+    window's summary - never a second source of truth about what happened."""
+    lines = result.stdout.splitlines()
+    document_line = _field(lines, "Document   :")
+    already_had = bool(document_line and "already ingested" in document_line)
+    document_id = document_line.split(maxsplit=1)[0] if document_line else None
+    pages = None
+    if document_line:
+        found = re.search(r"(\d[\d,]*) (pages|slides|sheet parts|images/pages|sections)\b", document_line)
+        if found:
+            pages = f"{found.group(1)} {found.group(2)}"
+    ocr_line = _field(lines, "OCR        :")
+    ocr_match = re.match(r"(\d+)", ocr_line) if ocr_line else None
+    ocr_count = int(ocr_match.group(1)) if ocr_match else 0
+    issue_total = 0
+    in_issues = False
+    for line in lines:
+        if line.startswith("Issues     :"):
+            in_issues = True
+            continue
+        if in_issues:
+            if not line.startswith("  ") or ":" in line:
+                break
+            parts = line.split()
+            if parts and parts[-1].isdigit():
+                issue_total += int(parts[-1])
+    status_line = _field(lines, "Document status:")
+    partially_processed = bool(status_line and "PARTIALLY_PROCESSED" in status_line)
+    if not result.ok:
+        headline = failure_headline(result)
+    elif already_had:
+        headline = "This document is already in your knowledge base."
+    elif issue_total or partially_processed:
+        headline = "Added to your knowledge base, with some extraction warnings."
+    else:
+        headline = "Added to your knowledge base."
+    return ExtractSummary(result.ok, already_had, document_id, pages, ocr_count, issue_total,
+                          partially_processed, headline)
 
 
 def display_command(argv: list[str] | tuple[str, ...]) -> str:
@@ -301,6 +385,31 @@ def approval(argv: list[str] | tuple[str, ...], project_root: Path) -> Approval 
                         f"'{command}' carries out what it understands as an action live on this computer, "
                         "after RUDRA's permission check. Add --dry-run to use the simulated computer.")
     return None
+
+
+# ------------------------------------------------------------------ uninstalling
+
+
+#: installer/RUDRA.iss's `AppId` (the braces are literal: Inno Setup's `{{...}` escapes to
+#: `{...}`). Identifies the one uninstall entry Inno Setup itself registers; RUDRA never
+#: builds a second, custom uninstall path (master specification: "use the real uninstaller").
+RUDRA_APP_ID = "{05B1382D-1FC2-4ADB-888C-F03C39A3DF08}"
+
+
+def find_uninstaller() -> str | None:
+    """The command Inno Setup registered to uninstall this installation, or None when RUDRA
+    was not installed by it (for example, running from source - there is nothing to find)."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    key_path = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{RUDRA_APP_ID}_is1"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            command, _ = winreg.QueryValueEx(key, "UninstallString")
+    except OSError:
+        return None
+    return command or None
 
 
 # ------------------------------------------------------------------ resources

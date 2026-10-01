@@ -105,6 +105,24 @@ def test_a_calculation_whose_target_is_not_a_symbol_is_incomplete_never_mapped_b
     assert any("symbol that stands for 'current'" in m for m in intent.missing)
 
 
+def test_a_calculation_reads_is_as_explicit_an_assignment_as_an_equals_sign():
+    """Natural phrasing ("R1 is 10 ohms") is read exactly like "R1 = 10 ohms" - still
+    textual and exact (P13-6), never a guessed value."""
+    _, intent = _one("Calculate I given I is V / R, V is 10 V and R is 5 Ω.")
+    assert intent.status is S.INTERPRETED
+    assert intent.command == ("calculate", "I", "--formula", "I = V / R", "--input", "V=10 V", "--input", "R=5 Ω")
+
+
+def test_a_calculation_with_only_input_values_and_no_equals_sign_still_reaches_given_parsing():
+    """"Calculate the current if R1 is 10 ohms, R2 is 20 ohms and V is 10 volts": every
+    value is read, but RUDRA still never chooses the formula for the user (N2)."""
+    _, intent = _one("Calculate the current if R1 is 10 ohms, R2 is 20 ohms and V is 10 volts.")
+    assert intent.status is S.INCOMPLETE and intent.command is None
+    assert any("symbol that stands for 'current'" in m for m in intent.missing)
+    assert any("the formulas" in m for m in intent.missing)
+    assert set(p for name, p in intent.parameters if name == "input") == {"R1=10 ohms", "R2=20 ohms", "V=10 volts"}
+
+
 @pytest.mark.parametrize(
     ("text", "intent_type", "parameters", "risk", "confirm"),
     [

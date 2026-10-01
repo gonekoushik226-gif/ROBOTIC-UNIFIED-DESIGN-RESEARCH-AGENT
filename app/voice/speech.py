@@ -19,6 +19,8 @@ import base64
 import hashlib
 import json
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +41,10 @@ class SpeechUnavailable(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class SpeechCancelled(Exception):
+    """Listening was stopped by the caller (the user pressed Stop) before it finished."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,21 +101,37 @@ _REPORT = (
 )
 
 
-def _run(script: str) -> dict:
+#: How often a cancellable run checks the cancellation flag and the overall timeout.
+_POLL_SECONDS = 0.2
+
+
+def _run(script: str, *, cancel: threading.Event | None = None) -> dict:
     # -EncodedCommand runs the script as one unit (stdin input would be read line by line).
     encoded = base64.b64encode(("$ProgressPreference = 'SilentlyContinue'\n" + script).encode("utf-16-le")).decode()
     try:
-        done = subprocess.run(
-            [POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT,
+        process = subprocess.Popen(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         raise SpeechUnavailable("Windows PowerShell is not available on this machine") from None
-    except subprocess.TimeoutExpired:
-        raise SpeechUnavailable(f"the speech engine did not answer within {TIMEOUT} s") from None
-    lines = [line for line in done.stdout.splitlines() if line.strip()]
-    if done.returncode != 0 or not lines:
-        detail = " ".join(done.stderr.split())[:300] or f"exit code {done.returncode}"
+    deadline = time.monotonic() + TIMEOUT
+    stdout = stderr = None
+    while stdout is None:
+        try:
+            stdout, stderr = process.communicate(timeout=_POLL_SECONDS)
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.is_set():
+                process.kill()
+                process.communicate()
+                raise SpeechCancelled("listening was cancelled")
+            if time.monotonic() >= deadline:
+                process.kill()
+                process.communicate()
+                raise SpeechUnavailable(f"the speech engine did not answer within {TIMEOUT} s") from None
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if process.returncode != 0 or not lines:
+        detail = " ".join(stderr.split())[:300] or f"exit code {process.returncode}"
         raise SpeechUnavailable(f"the speech engine failed: {detail}")
     try:
         return json.loads(lines[-1])
@@ -144,10 +166,14 @@ def recognize_file(path: Path) -> Transcript:
                       result.get("recognizer") or "", f"{path} (SHA-256 {hashlib.sha256(data).hexdigest()})")
 
 
-def listen(seconds: int = 10) -> Transcript:
-    """ONE utterance from the default microphone, on the user's request; nothing is kept."""
+def listen(seconds: int = 10, *, cancel: threading.Event | None = None) -> Transcript:
+    """ONE utterance from the default microphone, on the user's request; nothing is kept.
+
+    `cancel`, when given, is checked while RUDRA waits for the engine; setting it (the
+    user pressed Stop) ends the wait and raises `SpeechCancelled` instead of a transcript.
+    """
     result = _run(_grammar_script() + "$engine.SetInputToDefaultAudioDevice()\n"
-                  f"$result = $engine.Recognize([TimeSpan]::FromSeconds({int(seconds)}))\n" + _REPORT)
+                  f"$result = $engine.Recognize([TimeSpan]::FromSeconds({int(seconds)}))\n" + _REPORT, cancel=cancel)
     return Transcript(result.get("text") or "", result.get("grammar") or "", result.get("confidence"),
                       result.get("recognizer") or "", "microphone (one utterance; not stored)")
 

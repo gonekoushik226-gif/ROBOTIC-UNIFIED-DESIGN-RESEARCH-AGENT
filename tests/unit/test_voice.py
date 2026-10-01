@@ -11,6 +11,8 @@ that reason (P20-10), never passed silently.
 
 from __future__ import annotations
 
+import threading
+import time
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +24,9 @@ from app.applications import APPLICATIONS
 from app.core.errors import InvalidInputError
 from app.orchestration import Outcome, Pipeline
 from app.security import Decision
-from app.voice import SpeechUnavailable, check_audio, command_phrases, recognize_file, synthesize
+from app.voice import SpeechCancelled, SpeechUnavailable, check_audio, command_phrases, recognize_file, synthesize
 from app.voice.speech import _quote
+from app.voice.speech import _run as _speech_run
 
 FIXED = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
 
@@ -75,6 +78,24 @@ def test_text_reaches_powershell_only_as_a_single_quoted_literal(text):
     quoted = _quote(text)
     assert quoted.startswith("'") and quoted.endswith("'")
     assert quoted[1:-1].replace("''", "") .count("'") == 0  # every inner quote is doubled
+
+
+# ------------------------------------------------------------ cancelling a wait (P20-10)
+
+
+def test_setting_cancel_stops_a_long_running_request():
+    """The GUI's Stop button sets this event; `_run` must notice it promptly, without
+    waiting for the whole 90 s engine timeout."""
+    cancel = threading.Event()
+    threading.Timer(0.3, cancel.set).start()
+    started = time.monotonic()
+    with pytest.raises(SpeechCancelled):
+        _speech_run("Start-Sleep -Seconds 30\n'{}' | Write-Output\n", cancel=cancel)
+    assert time.monotonic() - started < 5
+
+
+def test_without_cancelling_a_quick_script_still_returns_normally():
+    assert _speech_run("'{\"text\": \"ok\"}' | Write-Output\n") == {"text": "ok"}
 
 
 # ------------------------------------------------------------ audio (P20-6)

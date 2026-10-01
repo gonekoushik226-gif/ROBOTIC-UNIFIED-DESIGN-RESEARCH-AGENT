@@ -79,11 +79,14 @@ the download, upgrade and uninstall.
   the source document at that page.
 - **Textbook mathematics**, typeset from a structured, searchable notation (see
   [Mathematics](#mathematics)).
-- **Calculation with units.** Exact rational arithmetic with SI units and dimension
-  checks, every step shown.
+- **Calculation with units, asked for naturally.** Exact rational arithmetic with SI units
+  and dimension checks, every step shown — through Ask, the same as any other question, not
+  a separate page.
+- **Speak instead of typing.** A microphone button beside Ask dictates your question with
+  Windows' own speech recognition; you can edit the words before sending.
 - **Reasoning over stored relationships**, conflict detection between sources, and a
   per-item provenance trace that re-checks the quoted text and the preserved file.
-- **Backup and restore** of the whole knowledge base as one file.
+- **Backup, restore and uninstall**, from one Settings page.
 - **Optional AI assistance**, off unless you turn it on with your own key (see
   [Optional AI assistance](#optional-ai-assistance)).
 
@@ -97,24 +100,33 @@ speech input. Several of these are only partly implemented; see
 ### First start
 
 RUDRA opens as a small assistant window: a status line, the latest answer and one input
-box. On first start it creates its data folder. **Full window** opens the full interface,
-with pages for Status, Ask, Lookup, Calculate, Provenance, Import, Backup, AI, Command
-and Help.
+box. On first start it creates its data folder. **Full window** opens the full interface:
+**Ask**, **Add document** and **Settings** for everyday use, with Status, Lookup,
+Provenance, Command and Help grouped as Advanced for when you want the detail underneath.
 
-### Importing documents
+### Adding a document
 
-**Full window → Import**, choose a document with **Browse…**, then **Import**. RUDRA asks
-before it writes to the knowledge base, copies the document into its own store (your
-original is never changed) and extracts its knowledge. Pages without a text layer are
-read with Windows' own OCR when it is available.
+**Full window → Add document**, choose a file with **Browse…**, then **Add document**.
+RUDRA asks before it writes to your knowledge base, copies the document into its own store
+(your original is never changed), and extracts its knowledge. You can ask about it right
+away. Pages without a text layer are read with Windows' own OCR when it is available; a
+short plain-language summary appears when it is done ("Added to your knowledge base", or
+"...with some extraction warnings"), with the technical detail - document ID, page counts,
+any issues - one click away behind **Details**.
 
-### Asking questions
+### Asking questions, including calculations
 
-Type a question in the assistant's input box or on the **Ask** page. The answer appears
-by itself. Lines resting on uncertain recognition are marked **Uncertain** with the
-reason, for example *"recognized by OCR from a scanned page; compare it with the
-source"*. A question that names nothing (*"summarize this section"*) is answered with
-what is missing, never with a guess.
+Type a question in the assistant's input box or on the **Ask** page - or click the
+microphone button beside it, speak, and edit the recognized words before sending. The
+answer appears by itself. Lines resting on uncertain recognition are marked **Uncertain**
+with the reason, for example *"recognized by OCR from a scanned page; compare it with the
+source"*. A question that names nothing (*"summarize this section"*) is answered with what
+is missing, never with a guess.
+
+There is no separate Calculate page: ask RUDRA to calculate the same way you would ask
+anything else, stating the formula and the values in the one sentence - for example
+*"Calculate I given I = V / R, V = 10 V and R = 5 Ω."* RUDRA never chooses a formula for
+you; if one is missing it says so.
 
 ### Viewing sources
 
@@ -156,25 +168,31 @@ uncertain. See [docs/MATH.md](docs/MATH.md).
 
 ## Backing up and moving your knowledge base
 
-**Full window → Backup → Export Knowledge Base…** writes one
+**Full window → Settings → Back up your knowledge** writes one
 `RUDRA-knowledge-<date>.rudrabackup` file — to a USB drive, an external disk or any
 folder. It holds a consistent snapshot of the knowledge database, the preserved copies of
 your documents, OCR and equation-layout records, and a manifest with version numbers and
 a SHA-256 checksum of every file. It never holds the program, logs, settings, AI keys or
 paths of your computer.
 
-**Import Knowledge Base…** restores it on the same or another computer. The file is
-checked completely before anything changes; an existing knowledge base is only replaced
+**Settings → Restore from a backup** restores it on the same or another computer. The file
+is checked completely before anything changes; an existing knowledge base is only replaced
 after you confirm, and it is moved aside, not deleted. A backup from a newer RUDRA is
 refused; one from an older RUDRA is upgraded. See
 [docs/BACKUP_FORMAT.md](docs/BACKUP_FORMAT.md).
+
+## Uninstalling
+
+**Settings → Uninstall RUDRA** starts the same uninstaller Windows Settings → Apps would
+use (there is no second, separate uninstall path). Your knowledge base lives in your user
+profile and is never removed by uninstalling or upgrading the program.
 
 ## Optional AI assistance
 
 RUDRA works fully without any AI service. If you want, you can connect **one** external
 provider of your choice — Anthropic, OpenAI, Google Gemini or Mistral — with **your own
-API key**, on the **AI** page. It is off by default and is only turned on after you read
-what will be sent and agree.
+API key**, from **Settings → Optional AI assistance → Manage AI assistance…**. It is off
+by default and is only turned on after you read what will be sent and agree.
 
 - The key is stored by the Windows Credential Manager, never in a RUDRA file, log or
   backup.
@@ -201,8 +219,8 @@ Details: [docs/AI_PRIVACY.md](docs/AI_PRIVACY.md).
 
 RUDRA checks GitHub for a newer stable release at most once a day. Drafts and
 pre-releases are ignored. A notice with a **Download** button opens the release page in
-your browser; RUDRA never downloads or installs anything itself. **Help → Check for
-Updates** checks immediately; **Check automatically** turns the daily check off. To
+your browser; RUDRA never downloads or installs anything itself. **Settings → Check for
+updates** checks immediately; **Check automatically** turns the daily check off. To
 update, run the newer installer — your knowledge base is kept.
 
 ## Working offline

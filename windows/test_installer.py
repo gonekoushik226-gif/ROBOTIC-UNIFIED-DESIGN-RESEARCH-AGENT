@@ -7,9 +7,14 @@ Everything happens under one temporary folder, which stands in for a clean user 
 the program is installed into ``<scratch>\\Programs\\RUDRA`` (per user, no administrator
 rights), and the installed program runs with ``LOCALAPPDATA`` pointed at
 ``<scratch>\\LocalAppData``, so its data folder is created exactly where an installed
-RUDRA creates it - inside the scratch folder. No Start Menu or desktop shortcut is made
-(/NOICONS, no tasks). The uninstall entry the installer registers for the current user is
-removed again by the uninstall step.
+RUDRA creates it - inside the scratch folder. Only the uninstall entry and the shortcuts
+cannot go there: every install registers RUDRA for the current user and makes its Start
+Menu shortcuts in the user's real Start Menu (the installer offers no way to leave them
+out, so /NOICONS changes nothing), and the desktop shortcut, when chosen, goes on the
+user's real desktop. Checks 1-6 choose no desktop shortcut (/TASKS=); check 7 chooses it.
+Each uninstall step removes them again, and the test refuses to start where RUDRA is
+already installed for the current user, whose entry and shortcuts it would replace and
+then remove.
 
 The installed programs run with a PATH that holds only Windows' own folders and with no
 PYTHON* variables, so nothing can come from a Python installation. Checks:
@@ -21,12 +26,17 @@ PYTHON* variables, so nothing can come from a Python installation. Checks:
   4. RUDRA.exe's own self-test passes, with the network cut off (sources hidden until
      View Sources, formulas typeset, export and restore, the update check failing quietly);
   5. installing again (or the newer installer given with --upgrade-to) keeps the user data;
-  6. uninstalling removes the program and keeps the user data.
+  6. uninstalling removes the program and keeps the user data;
+  7. installed with the wizard's choices left as they are, RUDRA gets its Start Menu
+     shortcuts and no desktop shortcut; with "Create a desktop shortcut" chosen
+     (/TASKS=desktopicon), the desktop shortcut starts the installed RUDRA.exe; uninstalling
+     removes them all.
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import locale
@@ -35,6 +45,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import winreg
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +59,11 @@ PAGE = (
     "I = V / Rtotal"
 )
 FORBIDDEN = (".db", ".db-wal", ".db-shm", ".pdf", ".log", ".rudrabackup")
+NO_TASKS = ("/NOICONS", "/TASKS=")
+#: The current user's desktop and Start Menu programs folders: {userdesktop} and {userprograms}.
+CSIDL_DESKTOPDIRECTORY, CSIDL_PROGRAMS = 0x10, 0x02
+#: The uninstall entry of a per-user installation: the AppId of installer\RUDRA.iss, plus _is1.
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{05B1382D-1FC2-4ADB-888C-F03C39A3DF08}_is1"
 
 
 #: The program folder of the installation under test, uninstalled when a check fails, so a
@@ -90,12 +106,49 @@ def clean_environment(local_app_data: Path, *, offline: bool = False) -> dict[st
     return env
 
 
-def run_setup(setup: Path, program: Path, log: Path) -> None:
-    command = [str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER", "/NOICONS",
-               "/TASKS=", f"/DIR={program}", f"/LOG={log}"]
+def run_setup(setup: Path, program: Path, log: Path, options: tuple[str, ...] = NO_TASKS) -> None:
+    command = [str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER", *options,
+               f"/DIR={program}", f"/LOG={log}"]
     done = subprocess.run(command, timeout=600)
     check(f"install {setup.name}", done.returncode == 0 and (program / "RUDRA.exe").is_file(),
           f"exit {done.returncode}, into {program}")
+
+
+def shell_folder(csidl: int) -> Path:
+    """A folder of the current user's, found the way Inno Setup finds it."""
+    buffer = ctypes.create_unicode_buffer(260)
+    if ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buffer) != 0:
+        sys.exit(f"Installer test FAILED: shell folder {csidl:#x} not found.")
+    return Path(buffer.value)
+
+
+def shortcut_target(link: Path) -> Path | None:
+    """The program a .lnk shortcut starts."""
+    quoted = str(link).replace("'", "''")
+    script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+              f"(New-Object -ComObject WScript.Shell).CreateShortcut('{quoted}').TargetPath")
+    done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, encoding="utf-8", timeout=120)
+    return Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else None
+
+
+def installed_rudra(desktop: Path, group: Path) -> list[str]:
+    """What the current user has of an installed RUDRA: its uninstall entry and shortcuts."""
+    found = [str(path) for path in (desktop, group) if path.exists()]
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY))
+        found.append(rf"HKCU\{UNINSTALL_KEY}")
+    except FileNotFoundError:
+        pass
+    return found
+
+
+def left_behind(desktop: Path, group: Path) -> list[str]:
+    """What an uninstall left of RUDRA's entry and shortcuts, given time to finish."""
+    deadline = time.monotonic() + 60
+    while (found := installed_rudra(desktop, group)) and time.monotonic() < deadline:
+        time.sleep(1)  # the uninstaller finishes in a copy of itself
+    return found
 
 
 def digest(path: Path) -> str:
@@ -127,7 +180,12 @@ def main() -> None:
                                   encoding=locale.getencoding(), errors="replace", timeout=300)
             return done.returncode, done.stdout + done.stderr
 
+        desktop = shell_folder(CSIDL_DESKTOPDIRECTORY) / "RUDRA.lnk"
+        group = shell_folder(CSIDL_PROGRAMS) / "RUDRA"
+
         print("=== 1. Install", flush=True)
+        found = installed_rudra(desktop, group)
+        check("RUDRA not installed yet", not found, "; ".join(found) or "no uninstall entry, no shortcuts")
         _INSTALLED.append(program)
         run_setup(args.setup, program, base / "install.log")
         installed = {p.relative_to(program).as_posix() for p in program.rglob("*") if p.is_file()}
@@ -181,6 +239,25 @@ def main() -> None:
         _INSTALLED.clear()
         check("program removed", not (program / "RUDRA.exe").exists() and not (program / "_internal").exists())
         check("data kept after uninstall", database.is_file() and digest(database) == before, data_home)
+
+        print("=== 7. Shortcuts: the Start Menu always, the desktop when chosen", flush=True)
+        menu = {"RUDRA.lnk": program / "RUDRA.exe", "RUDRA Command Line.lnk": program / "RUDRA-CLI.exe",
+                "Uninstall RUDRA.lnk": program / "unins000.exe"}
+        found = left_behind(desktop, group)
+        check("nothing left by uninstall", not found, "; ".join(found) or "no uninstall entry, no shortcuts")
+        _INSTALLED.append(program)
+        run_setup(args.setup, program, base / "shortcuts.log", options=())  # every choice left as it is
+        for name, target in menu.items():
+            link = group / name
+            check(f"Start Menu {name}", link.is_file() and shortcut_target(link) == target, link)
+        check("desktop shortcut not chosen", not desktop.exists(), f"no {desktop}")
+        run_setup(args.setup, program, base / "desktop.log", options=("/TASKS=desktopicon",))
+        target = shortcut_target(desktop) if desktop.is_file() else None
+        check("desktop shortcut chosen", target == program / "RUDRA.exe", f"{desktop} -> {target}")
+        uninstall(program)
+        _INSTALLED.clear()
+        found = left_behind(desktop, group)
+        check("shortcuts removed", not found, "; ".join(found) or "no uninstall entry, no shortcuts")
         print("\nInstaller test passed.")
 
 

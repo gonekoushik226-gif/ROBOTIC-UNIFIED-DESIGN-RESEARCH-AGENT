@@ -11,6 +11,7 @@ voice never bypasses authorization (section 220). There is no always-listening m
 from app.voice.speech import (
     CULTURE,
     VERBS,
+    SpeechCancelled,
     SpeechUnavailable,
     Transcript,
     check_audio,
@@ -23,6 +24,7 @@ from app.voice.speech import (
 __all__ = [
     "CULTURE",
     "VERBS",
+    "SpeechCancelled",
     "SpeechUnavailable",
     "Transcript",
     "check_audio",

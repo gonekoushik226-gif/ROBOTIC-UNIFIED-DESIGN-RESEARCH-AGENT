@@ -6,6 +6,7 @@ database, and nothing here needs the prototype PDF that has not been supplied.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 
 import pytest
@@ -309,3 +310,21 @@ def test_unknown_metadata_stays_none(pdf):
 
 def test_the_adapter_satisfies_the_port():
     assert isinstance(PypdfParser(), PdfParser)
+
+
+def test_text_extraction_silences_pypdfs_own_font_warnings(pdf, monkeypatch, caplog):
+    """pypdf logs a warning per CFF Type1 font it cannot fully decode without the optional
+    `fontTools` package (docs/FORMATS.md). That warning is not a RUDRA diagnostic - it is
+    never recorded as an `extraction_issue` - so it must not reach the normal interface or
+    a terminal; it is silenced the same way the glyph-layout pass already silences it."""
+    import pypdf
+
+    def noisy_extract_text(self, *args, **kwargs):
+        logging.getLogger("pypdf").warning("fontTools is required to fully parse the encoding of a font")
+        return "some text"
+
+    monkeypatch.setattr(pypdf.PageObject, "extract_text", noisy_extract_text)
+    with caplog.at_level(logging.WARNING, logger="pypdf"):
+        pages = list(PypdfParser().pages(pdf(textbook_pdf())))
+    assert [p.text for p in pages] == ["some text"] * 4
+    assert "fontTools" not in caplog.text

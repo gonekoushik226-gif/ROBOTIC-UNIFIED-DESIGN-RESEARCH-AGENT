@@ -33,6 +33,21 @@ doubt, are stored as *uncertain*.
 | XML (generic) | Its meaning depends on a schema RUDRA does not know | — |
 | Other files (programs, archives, audio, video) | Not documents | — |
 
+## PDF fonts and `fontTools`
+
+`pypdf` can use the optional `fontTools` package to parse the internal encoding of an
+embedded CFF Type1 font that has no `/ToUnicode` map of its own. RUDRA does not bundle
+`fontTools`: tested against the project's reference PDF (137 pages, many such fonts, all
+naming a standard `/Encoding` such as WinAnsi), installing it changed not one character of
+the extracted text, because pypdf already decodes those fonts from the encoding the PDF
+itself declares - `fontTools` would only matter for a font that relies solely on its own
+built-in encoding with neither a named `/Encoding` nor a `/ToUnicode` map, which is rare.
+Adding a dependency with no measured benefit would work against RUDRA's minimal-dependency
+design ([DESIGN.md](DESIGN.md)). pypdf's own warning about this ("fontTools is required to
+fully parse...") is not a RUDRA diagnostic - it is never recorded as an `extraction_issue` -
+so RUDRA silences it rather than letting it scroll past in the normal interface or a
+terminal; nothing it would have reported is lost to a technical user.
+
 ## Safety
 
 Office and EPUB files are ZIP containers. They are opened read-only with limits (at most

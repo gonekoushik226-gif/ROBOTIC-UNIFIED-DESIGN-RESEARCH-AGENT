@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+Simplified the desktop window for everyday use, without changing what RUDRA does
+underneath.
+
+- **Ask does calculation too.** The standalone Calculate page is gone; ask RUDRA to
+  calculate the same way you ask anything else, stating the formula and values in one
+  sentence (*"Calculate I given I = V / R, V = 10 V and R = 5 Ω."*). Natural phrasing with
+  "is" instead of "=" is read the same way (*"R1 is 10 ohms"*). The calculation engine and
+  its CLI command are unchanged; RUDRA still never chooses a formula.
+- **Speak instead of typing.** A microphone button beside Ask's question field (and the
+  assistant's own input) dictates with Windows' own speech recognition; the recognized
+  words can be edited before sending, and listening can be stopped early.
+- **Add document**, not Import: choosing and adding a file now ends with a short,
+  plain-language result ("Added to your knowledge base", or "...with some extraction
+  warnings") instead of the command's raw technical report; that report is still there, one
+  click away behind **Details**.
+- **Settings** is now the one place for maintenance: checking for updates, backing up and
+  restoring your knowledge, managing optional AI assistance, and uninstalling RUDRA (through
+  the real Inno Setup uninstaller - the same one Windows Settings > Apps would use). Status,
+  Lookup, Provenance, Command and Help remain available, grouped as Advanced.
+- pypdf's own "fontTools is required..." warning no longer appears while reading a PDF's
+  text. Investigated and found to make no measured difference on the project's reference
+  document (RUDRA does not bundle the optional `fontTools` package); see
+  [docs/FORMATS.md](docs/FORMATS.md).
+
 ## 0.1.0
 
 First public release of RUDRA for Windows.

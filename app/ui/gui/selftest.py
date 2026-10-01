@@ -207,19 +207,48 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
             return ok, f"{info.message()} Real request without network: {real.status} ({real.reason})"
         return info.status is UpdateStatus.UNAVAILABLE, info.message()
 
+    def calculate_through_ask() -> tuple[bool, str]:
+        """No standalone Calculate page: the same calculation, asked for naturally."""
+        window.show(full=True)
+        pages["ask"].question.set("Calculate I given I = V / Rtotal, Rtotal = R1 + R2, R1 = 10 Ω, R2 = 20 Ω, "
+                                  "V = 10 V")
+        return pages["ask"].run()
+
+    def import_rendered_plainly() -> tuple[bool, str]:
+        # "Added to your knowledge base" alone, or "...with some extraction warnings" -
+        # either is correct; this fixture is expected to raise a couple of warnings.
+        shown = window.full.output.text_content()
+        ok = "Added to your knowledge base" in shown and pdf.name in shown and "Status     :" not in shown
+        window.full.output.toggle_extract_details()
+        detailed = window.full.output.text_content()
+        window.full.output.toggle_extract_details()
+        ok = ok and "Status     : COMPLETED" in detailed
+        return ok, shown[:200] + " | details: " + detailed[:200]
+
+    def settings_page() -> tuple[bool, str]:
+        """Settings reaches backup, AI and update checks without a separate page for each."""
+        window.show(full=True)
+        view.select("settings")
+        page = pages["settings"]
+        ok = ("ai" not in view.nav and "backup" not in view.nav and page.ai_status.cget("text").startswith("Off"))
+        return ok, page.ai_status.cget("text")
+
+    view = window.full
     plan: list[Step] = [
         ("window", window_check, None),
         ("startup", lambda: pages["status"].run("start"), startup_check),
         ("version", lambda: pages["status"].run("version"), _contains(PHASE)),
-        ("calculate", pages["calculate"].run, _contains("CALCULATED", "exact value 1/3")),
+        ("calculate through ask", calculate_through_ask, _contains('"status": "CALCULATED"', '"displayed": "0.333333"')),
         ("assistant command", compact("/version"), _contains(PHASE)),
         ("form check", form_error, None),
         ("update check offline", offline_update_check, None),
+        ("settings page", settings_page, None),
     ]
     if pdf is not None:
         plan += [
             ("database", pages["import"].database, _contains("created, schema version 6")),
             ("import", fill("import", pdf=str(pdf)), _contains("\nStatus     : COMPLETED")),
+            ("import rendered plainly", import_rendered_plainly, None),
             ("lookup", fill("lookup", mode="name", value="Resistance"), _contains("CPT-00000001")),
             ("provenance", fill("provenance", identifier="K-00000001"), _contains("Verification: VERIFIED")),
             ("ask", fill("ask", question="What is resistance?"), _contains("ANSWERED")),

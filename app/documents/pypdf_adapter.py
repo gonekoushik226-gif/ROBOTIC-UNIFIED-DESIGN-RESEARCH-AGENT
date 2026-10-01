@@ -80,7 +80,8 @@ class PypdfParser:
         for index in range(total):
             number = index + 1
             try:
-                text = reader.pages[index].extract_text() or ""
+                with _quiet_pypdf():
+                    text = reader.pages[index].extract_text() or ""
             except Exception as exc:  # noqa: BLE001 - see below
                 # Deliberately broad. pypdf raises a wide and undocumented range on
                 # malformed page content, and the alternative to catching it is
@@ -181,7 +182,16 @@ class PypdfParser:
 
 @contextmanager
 def _quiet_pypdf():
-    """pypdf's font warnings (fonts it only partly parses) are noise for a layout pass: silenced there."""
+    """Silence pypdf's own per-font logging during text and layout extraction.
+
+    pypdf warns, once per affected font dictionary, that the optional `fontTools`
+    package is not installed and so it cannot parse a CFF Type1 font's internal
+    encoding. RUDRA does not bundle `fontTools` (ADR: tested against the project's
+    reference PDF, where every such font already names a standard `/Encoding` and
+    the warning made no difference to the extracted text; see docs/FORMATS.md). The
+    warning is not a RUDRA diagnostic - it is never recorded as an `extraction_issue`
+    - so silencing it loses no information a technical user could otherwise see.
+    """
     logger = logging.getLogger("pypdf")
     level = logger.level
     logger.setLevel(logging.ERROR)

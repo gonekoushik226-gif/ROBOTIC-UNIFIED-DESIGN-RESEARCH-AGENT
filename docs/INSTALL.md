@@ -47,11 +47,13 @@ The Start Menu also has **RUDRA Command Line** (the same functions as text comma
 
 ## First use
 
-1. Open **Full window → Import** and import a document (PDF, Word, PowerPoint, Excel,
+1. Open **Full window → Add document** and add a document (PDF, Word, PowerPoint, Excel,
    EPUB, web page, text or an image).
-2. Ask a question in the assistant box — for example *"What is resistance?"*.
+2. Ask a question in the assistant box, type on the **Ask** page, or click its microphone
+   button and speak — for example *"What is resistance?"*.
 3. Use **View Sources** on an answer to see where it came from.
-4. Export a backup now and then: **Full window → Backup → Export Knowledge Base…**.
+4. Back up your knowledge now and then: **Full window → Settings → Back up your
+   knowledge**.
 
 ## Upgrade
 
@@ -61,14 +63,16 @@ knowledge base on first start, after saving a copy in `%LOCALAPPDATA%\RUDRA\data
 
 ## Move to another computer
 
-Export a backup on the old computer (**Backup → Export Knowledge Base…**), install RUDRA
-on the new one, and use **Backup → Import Knowledge Base…**. Optional AI keys are not part
-of backups; add your key again on the new computer if you use AI assistance.
+Back up your knowledge on the old computer (**Settings → Back up your knowledge**),
+install RUDRA on the new one, and use **Settings → Restore from a backup**. Optional AI
+keys are not part of backups; add your key again on the new computer if you use AI
+assistance.
 
 ## Uninstall
 
-**Settings → Apps → Installed apps → RUDRA → Uninstall**, or **Uninstall RUDRA** in the
-Start Menu. The program and shortcuts are removed; **your data folder is kept**. To remove
-everything, delete `%LOCALAPPDATA%\RUDRA\` afterwards, and, if you added an AI key, remove
-it on the AI page before uninstalling (or delete the `RUDRA/ai/...` entry in Windows
-Credential Manager).
+**RUDRA's own Settings → Uninstall RUDRA**, Windows' **Settings → Apps → Installed apps →
+RUDRA → Uninstall**, or **Uninstall RUDRA** in the Start Menu all run the same uninstaller.
+The program and shortcuts are removed; **your data folder is kept**. To remove everything,
+delete `%LOCALAPPDATA%\RUDRA\` afterwards, and, if you added an AI key, remove it in
+Settings before uninstalling (or delete the `RUDRA/ai/...` entry in Windows Credential
+Manager).
