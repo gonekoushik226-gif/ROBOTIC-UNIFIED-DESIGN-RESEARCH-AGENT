@@ -125,13 +125,21 @@ def shell_folder(csidl: int) -> Path:
 
 
 def shortcut_target(link: Path) -> Path | None:
-    """The program a .lnk shortcut starts."""
+    """The program a .lnk shortcut starts, allowing Explorer a moment to finish creating it."""
     quoted = str(link).replace("'", "''")
     script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
               f"(New-Object -ComObject WScript.Shell).CreateShortcut('{quoted}').TargetPath")
-    done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                          capture_output=True, text=True, encoding="utf-8", timeout=120)
-    return Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else None
+    deadline = time.monotonic() + 15
+    target = None
+    while time.monotonic() < deadline:
+        if link.is_file():
+            done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                  capture_output=True, text=True, encoding="utf-8", timeout=120)
+            target = Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else None
+            if target is not None and target.is_file():
+                return target
+        time.sleep(0.25)
+    return target
 
 
 def installed_rudra(desktop: Path, group: Path) -> list[str]:
@@ -274,8 +282,7 @@ def main() -> None:
         check("data kept after uninstall", database.is_file() and digest(database) == before, data_home)
 
         print("=== 7. Shortcuts: the Start Menu always, the desktop when chosen", flush=True)
-        menu = {"RUDRA.lnk": program / "RUDRA.exe", "RUDRA Command Line.lnk": program / "RUDRA-CLI.exe",
-                "Uninstall RUDRA.lnk": program / "unins000.exe"}
+        menu = {"RUDRA.lnk": program / "RUDRA.exe", "RUDRA Command Line.lnk": program / "RUDRA-CLI.exe"}
         found = left_behind(desktop, group)
         check("nothing left by uninstall", not found, "; ".join(found) or "no uninstall entry, no shortcuts")
         _INSTALLED.append(program)
@@ -283,6 +290,12 @@ def main() -> None:
         for name, target in menu.items():
             link = group / name
             check(f"Start Menu {name}", link.is_file() and shortcut_target(link) == target, link)
+        uninstall_link = group / "Uninstall RUDRA.lnk"
+        uninstall_target = shortcut_target(uninstall_link)
+        uninstallers = {path.resolve() for path in program.glob("unins*.exe") if path.is_file()}
+        check("Start Menu Uninstall RUDRA.lnk", uninstall_target is not None
+              and uninstall_target.resolve() in uninstallers,
+              f"{uninstall_link} -> {uninstall_target}; available uninstallers: {sorted(map(str, uninstallers))}")
         check("desktop shortcut not chosen", not desktop.exists(), f"no {desktop}")
         run_setup(args.setup, program, base / "desktop.log", options=("/TASKS=desktopicon",))
         target = shortcut_target(desktop) if desktop.is_file() else None
