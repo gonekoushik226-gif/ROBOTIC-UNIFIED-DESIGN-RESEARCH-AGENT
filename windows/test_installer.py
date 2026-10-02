@@ -74,8 +74,22 @@ _INSTALLED: list[Path] = []
 
 
 def uninstall(program: Path) -> None:
-    uninstaller = program / "unins000.exe"
-    if not uninstaller.is_file():
+    """Run the uninstaller registered for this installation (Inno may number it unins001)."""
+    uninstaller = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as entry:
+            command, _ = winreg.QueryValueEx(entry, "UninstallString")
+        command = str(command).strip()
+        path = command[1:command.find('"', 1)] if command.startswith('"') else command.split(" ", 1)[0]
+        candidate = Path(path)
+        if candidate.is_file() and candidate.resolve().parent == program.resolve():
+            uninstaller = candidate
+    except (OSError, ValueError):
+        pass
+    if uninstaller is None:
+        candidates = sorted(program.glob("unins*.exe"), key=lambda path: path.stat().st_mtime, reverse=True)
+        uninstaller = next((path for path in candidates if path.is_file()), None)
+    if uninstaller is None:
         return
     subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300)
     deadline = time.monotonic() + 180
