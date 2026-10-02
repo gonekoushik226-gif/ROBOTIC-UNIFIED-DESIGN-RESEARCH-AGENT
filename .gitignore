@@ -8,6 +8,10 @@ data/
 # Runtime logs (including the audit log channel).
 logs/
 
+# The offline speech recogniser (windows/fetch_speech.py puts it here: a 190 MB model and
+# the whisper.cpp program, fetched and verified, never committed).
+/speech/
+
 # --- Secrets (master specification Part 4 section 121, Part 6 section 22) ------
 # Secrets must never be stored in source control. RUDRA has no secrets today; these
 # patterns are here so that the first one to appear cannot be committed by accident.
@@ -51,3 +55,4 @@ private/
 *.rudrabackup
 config/updates.json
 config/updates-*.json
+config/voice.json

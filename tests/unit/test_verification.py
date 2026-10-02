@@ -253,7 +253,7 @@ def test_a_reasoning_answer_is_reproduced_and_every_step_rechecked(repo, tmp_pat
     steps = [c for c in report.checks if c.kind == "STEP"]
     assert len(steps) == 3 and all(c.status is CheckStatus.VERIFIED for c in steps)
     assert report.exposure.source_status is ProvenanceStatus.AVAILABLE
-    assert report.exposure.calculation == ("No calculation: dependency reasoning performs none (Phase 10).",)
+    assert report.exposure.calculation == ("No calculation: dependency reasoning performs none.",)
     assert g.x.id in {s.split(": ")[1].split(" ")[0] for s in report.exposure.derivation}
 
 

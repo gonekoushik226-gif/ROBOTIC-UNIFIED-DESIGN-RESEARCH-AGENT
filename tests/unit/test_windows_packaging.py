@@ -250,3 +250,143 @@ def test_the_installer_test_recognizes_an_installed_rudra():
 def test_the_release_names_its_files_as_published():
     assert build.INSTALLER_SCRIPT == PROJECT_ROOT / "installer" / "RUDRA.iss"
     assert build.INSTALLER_DIR == PROJECT_ROOT / "dist" / "installer"
+
+
+# ---------------------------------------------------------------- the offline speech recogniser
+
+
+def test_the_speech_components_are_pinned_exactly_and_their_licenses_ship():
+    import re
+
+    from windows import fetch_speech
+
+    for entry in (fetch_speech.ENGINE, fetch_speech.MODEL, fetch_speech.VAD):
+        assert entry["url"].startswith("https://") and entry["license"] == "MIT"
+        assert re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) and entry["size"] > 0
+    # a revision or a release tag, never a moving branch: the same bytes next year
+    assert "/resolve/main/" not in fetch_speech.MODEL["url"] and "/resolve/main/" not in fetch_speech.VAD["url"]
+    assert "/releases/download/b5130/" in fetch_speech.ENGINE["url"]
+    for name in fetch_speech.LICENSE_FILES:
+        text = (fetch_speech.LICENSES / name).read_text(encoding="utf-8")
+        assert "MIT License" in text and "Copyright (c)" in text
+    notices = (PROJECT_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    for entry in (fetch_speech.MODEL, fetch_speech.VAD):
+        assert entry["file"] in notices
+    assert fetch_speech.ENGINE["url"].split("/")[-2] == "b5130" and "b5130" in notices
+    assert "/speech/" in (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")  # 190 MB: never committed
+
+
+def _fake_pins(monkeypatch, tmp_path):
+    """Pins that describe small fake files, so the fetch logic runs with no network and no 190 MB model."""
+    import hashlib
+    import zipfile
+
+    from windows import fetch_speech
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    archive = cache / "whisper-bin-x64.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in ("whisper-cli.exe", "whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-haswell.dll",
+                     "SDL2.dll", "bench.exe"):
+            bundle.writestr(f"Release/{name}", name.encode())
+    (cache / "model.bin").write_bytes(b"m" * 7)
+    (cache / "vad.bin").write_bytes(b"v" * 3)
+
+    def pin(path, **extra):
+        data = path.read_bytes()
+        return {"url": "https://example.invalid/never-fetched", "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(), "license": "MIT", **extra}
+
+    monkeypatch.setattr(fetch_speech, "ENGINE", pin(archive, name="whisper.cpp", version="test"))
+    monkeypatch.setattr(fetch_speech, "MODEL", pin(cache / "model.bin", name="model", file="model.bin"))
+    monkeypatch.setattr(fetch_speech, "VAD", pin(cache / "vad.bin", name="vad", file="vad.bin"))
+    monkeypatch.setattr(fetch_speech, "SPEECH", tmp_path / "speech")
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("the fetch script went to the network for a file the cache holds")
+
+    monkeypatch.setattr(fetch_speech.urllib.request, "urlopen", no_network)
+    return fetch_speech, cache
+
+
+def test_fetching_installs_only_what_the_program_needs_and_verifies_it(monkeypatch, tmp_path):
+    fetch_speech, cache = _fake_pins(monkeypatch, tmp_path)
+    fetch_speech.install(cache)
+    installed = sorted(path.relative_to(tmp_path / "speech").as_posix() for path in (tmp_path / "speech").rglob("*")
+                       if path.is_file())
+    assert "whisper-cli.exe" in installed and "ggml-cpu-haswell.dll" in installed and "models/model.bin" in installed
+    assert "SDL2.dll" not in installed and "bench.exe" not in installed        # the examples are not shipped
+    assert all(f"licenses/{name}" in installed for name in fetch_speech.LICENSE_FILES) and "manifest.json" in installed
+    assert fetch_speech.check() == []
+    from app.voice import engine
+
+    parts = engine.find_components(tmp_path / "speech")        # the runtime reads what the script wrote
+    assert parts.label == fetch_speech.RECOGNIZER and parts.model.name == "model.bin" and parts.vad.name == "vad.bin"
+
+
+def test_a_damaged_or_swapped_speech_file_is_found_by_the_check(monkeypatch, tmp_path):
+    fetch_speech, cache = _fake_pins(monkeypatch, tmp_path)
+    fetch_speech.install(cache)
+    (tmp_path / "speech" / "models" / "model.bin").write_bytes(b"x" * 7)         # same size, other bytes
+    (tmp_path / "speech" / "licenses" / fetch_speech.LICENSE_FILES[0]).unlink()
+    problems = fetch_speech.check()
+    assert any("model.bin" in problem and "SHA-256" in problem for problem in problems)
+    assert any(fetch_speech.LICENSE_FILES[0] in problem for problem in problems)
+
+
+def test_a_cached_file_that_does_not_match_its_pin_is_refused_not_used(monkeypatch, tmp_path):
+    fetch_speech, cache = _fake_pins(monkeypatch, tmp_path)
+    (cache / "vad.bin").write_bytes(b"tampered")
+    monkeypatch.setattr(fetch_speech.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    with pytest.raises(OSError):                       # it tried to fetch the real one instead of trusting the copy
+        fetch_speech.install(cache)
+    assert not (tmp_path / "speech" / "models" / "vad.bin").exists()
+
+
+def test_the_build_bundles_the_verified_speech_folder_beside_the_programs(monkeypatch, tmp_path):
+    fetch_speech, cache = _fake_pins(monkeypatch, tmp_path)
+    fetch_speech.install(cache)
+    target = tmp_path / "dist" / "RUDRA"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(build, "TARGET", target)
+    build.bundle_speech()
+    assert (target / "speech" / "manifest.json").is_file() and (target / "speech" / "models" / "model.bin").is_file()
+    assert fetch_speech.check(target / "speech") == []
+
+
+def test_the_build_stops_when_the_speech_folder_is_missing(monkeypatch, tmp_path):
+    fetch_speech, _ = _fake_pins(monkeypatch, tmp_path)               # nothing installed
+    monkeypatch.setattr(build, "TARGET", tmp_path / "dist" / "RUDRA")
+    with pytest.raises(SystemExit) as stopped:
+        build.bundle_speech()
+    assert "fetch_speech.py" in str(stopped.value)
+
+
+def test_the_installer_ships_the_speech_folder_and_replaces_it_completely_on_upgrade():
+    script = (PROJECT_ROOT / "installer" / "RUDRA.iss").read_text(encoding="utf-8")
+    assert r'Source: "..\dist\RUDRA\*"' in script and "recursesubdirs" in script       # carries dist\RUDRA\speech
+    assert r'Type: filesandordirs; Name: "{app}\speech"' in script
+
+
+def test_the_package_check_does_not_read_the_neural_network_model_whole(monkeypatch, tmp_path, capsys):
+    from PyInstaller.archive import readers
+
+    class EmptyArchive:
+        toc: dict = {}
+
+        def __init__(self, filename):
+            pass
+
+    monkeypatch.setattr(readers, "CArchiveReader", EmptyArchive)
+    (tmp_path / "speech" / "models").mkdir(parents=True)
+    # Text that looks like a build-machine path inside a binary model is not a leak of ours:
+    (tmp_path / "speech" / "models" / "model.bin").write_bytes(f"{PROJECT_ROOT}".encode())
+    (tmp_path / "speech" / "notes.txt").write_text(f"built in {PROJECT_ROOT}", encoding="utf-8")  # but a text file is
+    (tmp_path / "RUDRA.exe").write_bytes(b"MZ")
+    (tmp_path / "RUDRA-CLI.exe").write_bytes(b"MZ")
+    with pytest.raises(SystemExit) as refused:
+        build.verify_package(tmp_path)
+    message = str(refused.value) + capsys.readouterr().out
+    assert "notes.txt" in message and "model.bin" not in message

@@ -65,7 +65,7 @@ def quote_check(repository: Repository, row: EvidenceRow) -> Check:
     elif _flat(stored) == row.evidence_text:
         return Check(kind, row.id, CheckStatus.VERIFIED,
                      f"the quoted text is at {where}, as extraction stores it: the line breaks "
-                     "inside the sentence flattened to single spaces (Phase 5)")
+                     "inside the sentence flattened to single spaces")
     return Check(kind, row.id, CheckStatus.FAILED,
                  f"the stored page text at {where} reads {stored!r}, which does not match the "
                  f"quoted {row.evidence_text!r}")
@@ -111,7 +111,7 @@ def file_check(document: Document, hashes: FileHashes) -> tuple[bool, Check]:
     if found is None:
         return False, Check(kind, document.id, CheckStatus.INCONCLUSIVE,
                             "the preserved file is not present; the knowledge and its provenance "
-                            "are preserved, and the citation stands on the stored page text (Part 7)")
+                            "are preserved, and the citation stands on the stored page text")
     if found.lower() == document.file_hash.lower():
         return True, Check(kind, document.id, CheckStatus.VERIFIED,
                            f"the preserved file's SHA-256 equals the stored hash {document.file_hash[:12]}…")

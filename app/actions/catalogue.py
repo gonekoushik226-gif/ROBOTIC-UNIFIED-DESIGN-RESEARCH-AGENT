@@ -232,7 +232,7 @@ def open_application(ctx: Context, values: dict) -> Outcome:
             return outcome
     outcome.observed = "no window of the application appeared"
     outcome.detail = (f"{app.name} could not be verified as opened: no matching window appeared after "
-                      f"{len(outcome.attempts)} attempt(s) (section 18)")
+                      f"{len(outcome.attempts)} attempt(s)")
     outcome.failure_stage = "VERIFICATION"
     return outcome
 
@@ -255,7 +255,7 @@ def close_application(ctx: Context, values: dict) -> Outcome:
                f"{len(windows)} open: {listed}")
         detail = (f"{app.name} has no open window" if not windows else
                   f"{len(windows)} windows of {app.name} are open; name one with window=HANDLE - RUDRA does "
-                  "not choose (section 97)")
+                  "not choose")
         return _blocked(conditions, detail)
     closed = platform.close_window(target.handle)
     outcome = Outcome(StepStatus.INCONCLUSIVE, "", "", conditions, executed=True,

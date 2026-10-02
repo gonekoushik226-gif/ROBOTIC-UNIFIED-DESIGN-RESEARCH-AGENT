@@ -68,7 +68,7 @@ def test_the_command_set_gains_exactly_procedure():
     before = {"start", "env", "config", "paths", "db", "extract", "classify", "lookup", "review", "edition",
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 16's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"manual", "research", "diagram", "voice", "ask", "source"} == before | {"procedure"}
+    assert set(cli_main._COMMANDS) - {"manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"procedure"}
 
 
 def test_section_213_a_documented_workflow_executed_twice(root, tmp_path):

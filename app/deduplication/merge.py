@@ -81,7 +81,7 @@ class Merger:
         if connection.in_transaction:
             raise InvalidInputError.of(
                 "The merge was not started: the connection has uncommitted work.",
-                "A merge is exactly one transaction (ADR 0033, P8-19). Starting it on top "
+                "A merge is exactly one transaction. Starting it on top "
                 "of pending writes would commit or roll back work that is not its own.",
                 stage="deduplication.merge",
                 data_changed=False,

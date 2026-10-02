@@ -27,7 +27,7 @@ from app.storage.archive import export_knowledge, inspect_backup, restore_knowle
 from app.ui.gui.commands import CommandResult
 from app.ui.gui.window import RudraWindow
 from app.updates import UpdateChecker, UpdateStatus
-from app.version import PHASE, VERSION
+from app.version import EDITION, VERSION
 
 TIMEOUT_MS = 240_000
 
@@ -96,7 +96,7 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
     def startup_check(result: CommandResult) -> tuple[bool, str]:
         ok, detail = _contains("Startup complete.")(result)
         compact = window.compact.output.text_content()
-        return ok and "Ready: startup complete." in compact, detail + "; compact summary shown"
+        return ok and "RUDRA is ready." in compact, detail + "; compact summary shown"
 
     def compact(text: str) -> Callable[[], object]:
         def start() -> object:
@@ -225,6 +225,68 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
         ok = ok and "Status     : COMPLETED" in detailed
         return ok, shown[:200] + " | details: " + detailed[:200]
 
+    def knowledge_page() -> tuple[bool, str]:
+        """The Knowledge page lists what the import stored, with each document's result."""
+        window.show(full=True)
+        view.select("knowledge")
+        settle()
+        page = pages["knowledge"]
+        page.kind.set("Equations")
+        page.load()
+        settle()
+        listed = [page.tree.item(row, "text") for row in page.tree.get_children()]
+        ok = bool(listed) and any("R1 + R2" in text for text in listed) and not page_leaks(window)
+        page.kind.set("Documents")
+        page.load()
+        settle()
+        documents = page.tree.get_children()
+        view.select("ask")  # leave the page: showing the window again would re-read the inventory
+        return ok and bool(documents), f"{len(listed)} equation(s) listed; {len(documents)} document row(s)"
+
+    def page_leaks(win) -> list[str]:
+        """Development vocabulary anywhere in the main pages' text (it must never be there)."""
+        import re
+
+        words = re.compile(r"Phase\s*\d|\bADR\b|\bAPI-\d|\bP\d+-\d+\b")
+        found = []
+        for key in ("ask", "import", "knowledge", "settings"):
+            page = win.full.pages[key]
+            texts = [page.heading, page.description]
+            stack = [page.frame]
+            while stack:
+                widget = stack.pop()
+                stack.extend(widget.winfo_children())
+                if "text" in widget.keys():  # a widget without a text option has no words to check
+                    texts.append(str(widget.cget("text")))
+            found += [t for t in texts if words.search(t)]
+        return found
+
+    def chosen_equations() -> tuple[bool, str]:
+        """RUDRA picks and chains the stored equations itself: no formula in the question."""
+        window.show(full=True)
+        pages["ask"].question.set("Calculate I when V = 10 V, R1 = 10 ohms and R2 = 20 ohms")
+        return pages["ask"].run()
+
+    def worked_solution() -> tuple[bool, str]:
+        """The calculation just run is shown as a worked solution: typeset, not as linear text."""
+        output = window.full.output
+        sources = [widget.formula_source for widget in output.embedded if isinstance(widget, tk.Canvas)]
+        shown = output.text_content()
+        result = next((source for source in sources if source.startswith("I ≈ 0.333333")), "")
+        fractions = [source for source in sources if r"\frac{" in source and r"\mathrm{" in source]
+        ok = bool(result) and bool(fractions) and "÷" not in shown and "→" not in shown and "\\frac" not in shown
+        return ok, f"{len(sources)} typeset formulas; result {result!r}; {len(fractions)} with stacked fractions and units"
+
+    def voice_hidden() -> tuple[bool, str]:
+        """The speech engine's helper process must have no console window of its own."""
+        import subprocess as sp
+
+        from app.voice import speech
+
+        options = speech._hidden_process()
+        ok = bool(options["creationflags"] & sp.CREATE_NO_WINDOW) and options["startupinfo"].wShowWindow == sp.SW_HIDE
+        return ok, "speech recognition starts with no console window"
+
     def settings_page() -> tuple[bool, str]:
         """Settings reaches backup, AI and update checks without a separate page for each."""
         window.show(full=True)
@@ -237,17 +299,16 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
     plan: list[Step] = [
         ("window", window_check, None),
         ("startup", lambda: pages["status"].run("start"), startup_check),
-        ("version", lambda: pages["status"].run("version"), _contains(PHASE)),
+        ("version", lambda: pages["status"].run("version"), _contains(EDITION)),
         ("calculate through ask", calculate_through_ask, _contains('"status": "CALCULATED"', '"displayed": "0.333333"')),
-        ("assistant command", compact("/version"), _contains(PHASE)),
+        ("assistant command", compact("/version"), _contains(EDITION)),
         ("form check", form_error, None),
         ("update check offline", offline_update_check, None),
         ("settings page", settings_page, None),
     ]
     if pdf is not None:
         plan += [
-            ("database", pages["import"].database, _contains("created, schema version 6")),
-            ("import", fill("import", pdf=str(pdf)), _contains("\nStatus     : COMPLETED")),
+                ("import", fill("import", pdf=str(pdf)), _contains("\nStatus     : COMPLETED")),
             ("import rendered plainly", import_rendered_plainly, None),
             ("lookup", fill("lookup", mode="name", value="Resistance"), _contains("CPT-00000001")),
             ("provenance", fill("provenance", identifier="K-00000001"), _contains("Verification: VERIFIED")),
@@ -255,6 +316,10 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
             ("answer only", answer_only, None),
             ("view sources", view_sources, None),
             ("formula", formula, None),
+            ("rudra chooses the equations", chosen_equations, _contains('"status": "ANSWERED"', "I ≈ 0.333333 A", "R1 + R2")),
+            ("calculation typeset", worked_solution, None),
+            ("knowledge page", knowledge_page, None),
+            ("voice runs hidden", voice_hidden, None),
             ("backup", backup_round_trip, None),
             ("assistant question", compact("What is resistance?"), _contains("ANSWERED")),
             ("word document", fill("import", pdf=str(sample_docx(pdf.parent / "inductance.docx"))),
@@ -306,7 +371,7 @@ def run(report_path: Path, project_root: Path, pdf: Path | None) -> int:
         state["pending"] = (name, check)
         if not start():
             state["pending"] = None
-            record(name, False, "the window did not start the command")
+            record(name, False, f"the window did not start the command (busy={window.busy}: {window.running})")
             root.after(50, advance)
 
     def on_result(result: CommandResult) -> None:

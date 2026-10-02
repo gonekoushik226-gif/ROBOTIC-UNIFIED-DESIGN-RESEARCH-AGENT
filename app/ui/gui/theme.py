@@ -121,7 +121,21 @@ def apply(root: tk.Tk) -> Fonts:
     style.configure("Surface.TCheckbutton", background=SURFACE)
     style.map("Surface.TCheckbutton", background=[("active", SURFACE)])
 
+    style.configure("TCombobox", fieldbackground=RAISED, background=RAISED, foreground=TEXT, arrowcolor=MUTED,
+                    bordercolor=LINE_BRIGHT, lightcolor=RAISED, darkcolor=RAISED, selectbackground=RAISED,
+                    selectforeground=TEXT, padding=4)
+    style.map("TCombobox", fieldbackground=[("readonly", RAISED), ("disabled", SURFACE)],
+              foreground=[("readonly", TEXT), ("disabled", FAINT)], selectbackground=[("readonly", RAISED)],
+              selectforeground=[("readonly", TEXT)], arrowcolor=[("active", ACCENT_SOFT)],
+              bordercolor=[("focus", ACCENT)])
+    root.option_add("*TCombobox*Listbox.background", RAISED)
+    root.option_add("*TCombobox*Listbox.foreground", TEXT)
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_DEEP)
+    root.option_add("*TCombobox*Listbox.selectForeground", "#f0f9ff")
     style.configure("Vertical.TScrollbar", background=RAISED, troughcolor=OUTPUT_BG, bordercolor=OUTPUT_BG,
                     lightcolor=RAISED, darkcolor=RAISED, arrowcolor=MUTED, gripcount=0)
     style.map("Vertical.TScrollbar", background=[("active", HOVER)])
+    style.configure("Horizontal.TScrollbar", background=RAISED, troughcolor=OUTPUT_BG, bordercolor=OUTPUT_BG,
+                    lightcolor=RAISED, darkcolor=RAISED, arrowcolor=MUTED, gripcount=0)
+    style.map("Horizontal.TScrollbar", background=[("active", HOVER)])
     return chosen

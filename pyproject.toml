@@ -16,7 +16,7 @@
 
 [project]
 name = "rudra"
-version = "0.1.0"
+version = "1.0.0"
 description = "RUDRA AI - Robotic Unified Design Research Agent (persistent knowledge, reasoning, calculation, verification and computer-control system)"
 requires-python = ">=3.12"
 dependencies = ["pypdf>=6,<7"]

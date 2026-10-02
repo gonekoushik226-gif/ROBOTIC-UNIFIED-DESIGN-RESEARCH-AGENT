@@ -14,7 +14,7 @@ import pytest
 from app.ui.cli.main import ExitCode
 from app.ui.gui import commands
 from app.ui.gui.commands import CommandResult, FormError
-from app.version import PHASE, VERSION
+from app.version import EDITION, VERSION
 from tests.conftest import PROJECT_ROOT
 
 # ---------------------------------------------------------------- forms to command lines
@@ -104,8 +104,8 @@ def test_commands_that_write_nothing_and_act_on_nothing_run_without_a_question(a
 
 
 @pytest.mark.parametrize("argv, title", [
-    (["db"], "Create or upgrade the database"),
-    (["extract", "a.pdf"], "Import a document"),
+    (["db"], "Create or upgrade the knowledge base"),
+    (["extract", "a.pdf"], "Add a document"),
     (["classify", "DOC-00000001"], "Run 'classify'"),
     (["edition", "DOC-2", "--work", "DOC-1"], "Run 'edition'"),
     (["merge"], "Run 'merge'"),
@@ -117,7 +117,7 @@ def test_commands_that_write_nothing_and_act_on_nothing_run_without_a_question(a
     (["do", "Open Notepad."], "Act on this computer"),
     (["ask", "Open Notepad."], "Act on this computer"),
     (["voice", "--listen"], "Act on this computer"),
-    (["--json", "extract", "a.pdf"], "Import a document"),
+    (["--json", "extract", "a.pdf"], "Add a document"),
 ])
 def test_writes_actions_and_the_internet_are_put_to_the_user_first(argv, title, tmp_path):
     approval = commands.approval(argv, tmp_path)
@@ -127,10 +127,10 @@ def test_writes_actions_and_the_internet_are_put_to_the_user_first(argv, title, 
 def test_the_approval_names_the_database_and_the_backup_rule_when_it_holds_knowledge(tmp_path):
     database = tmp_path / "data" / "database" / "knowledge.db"
     assert str(database) in commands.approval(["db"], tmp_path).message
-    assert "export a backup" not in commands.approval(["db"], tmp_path).message
+    assert "Back up your knowledge" not in commands.approval(["db"], tmp_path).message
     database.parent.mkdir(parents=True)
     database.write_bytes(b"")
-    assert "export a backup" in commands.approval(["extract", "a.pdf"], tmp_path).message
+    assert "Back up your knowledge" in commands.approval(["extract", "a.pdf"], tmp_path).message
 
 
 # ---------------------------------------------------------------- running
@@ -139,7 +139,7 @@ def test_the_approval_names_the_database_and_the_backup_rule_when_it_holds_knowl
 def test_a_run_returns_the_command_lines_own_output_and_exit_code(tmp_path):
     result = commands.run(["version"], tmp_path)
     assert result.ok and result.exit_code == 0 and result.meaning == "ok"
-    assert f"RUDRA {VERSION}" in result.stdout and PHASE in result.stdout
+    assert f"RUDRA {VERSION}" in result.stdout and EDITION in result.stdout
     assert "RUDRA starting" in result.stderr  # the console log, captured too
     assert result.argv == ("version",) and (tmp_path / "logs").is_dir()  # --project-root was passed
 
@@ -171,15 +171,33 @@ def test_display_command_is_what_a_terminal_would_run():
 
 
 def test_the_startup_summary_is_short_and_keeps_what_needs_attention():
-    stdout = ("RUDRA AI 0.1.0  (Phase 23 - Final Acceptance)\n  Project root : X\n\nAttention:\n"
+    stdout = ("RUDRA 1.0.0  (for Windows)\n  Project root : X\n\nAttention:\n"
               "  [WARNING] RAM: Little headroom.\n          Close things.\n\nStartup complete. ...\n")
     summary = commands.startup_summary(CommandResult(("start",), 0, stdout, "", 0.1))
-    assert summary.splitlines() == ["RUDRA AI 0.1.0  (Phase 23 - Final Acceptance)", "Ready: startup complete.",
-                                    "Attention:", "  [WARNING] RAM: Little headroom."]
-    calm = commands.startup_summary(CommandResult(("start",), 0, "RUDRA AI\nStartup complete.\n", "", 0.1))
-    assert calm.endswith("Nothing needs attention.")
+    assert summary.splitlines() == ["RUDRA is ready.", "Attention:", "  Memory: Little headroom."]
+    calm = commands.startup_summary(CommandResult(("start",), 0, "RUDRA\nStartup complete.\n", "", 0.1))
+    assert calm == "RUDRA is ready."
     failed = commands.startup_summary(CommandResult(("start",), 5, "", "Storage failed.", 0.1))
-    assert failed.startswith("Startup did not complete: storage (exit 5).")
+    assert failed.startswith("RUDRA could not start properly (exit 5).") and "Storage failed." in failed
+    assert "Phase" not in summary + calm + failed
+
+
+def test_the_welcome_facts_come_from_the_inventory_result():
+    stdout = ('{"totals": {"documents": 2, "counts": {"CONCEPT": 3, "EQUATION": 9}, "uncertain": 4}, '
+              '"calculation": {"usable": 5}}')
+    facts = commands.welcome_facts(CommandResult(("inventory", "--json"), 0, stdout, "", 0.1))
+    assert facts == {"documents": 2, "counts": {"CONCEPT": 3, "EQUATION": 9}, "usable": 5, "uncertain": 4}
+    nothing = commands.welcome_facts(CommandResult(("inventory", "--json"), 3, "", "", 0.1))
+    assert nothing["documents"] == 0
+
+
+def test_an_answer_of_unknown_is_not_an_error_in_the_status_bar():
+    unknown = CommandResult(("ask", "What is X?", "--json"), 3, '{"parts": []}', "", 0.1)
+    assert commands.finished_state(unknown) == ("READY · answered", True)
+    added = CommandResult(("extract", "a.pdf"), 0, "", "", 0.1)
+    assert commands.finished_state(added) == ("READY · document added", True)
+    refused = CommandResult(("extract", "a.pdf"), 2, "", "", 0.1)
+    assert commands.finished_state(refused)[1] is False
 
 
 def test_answer_lines_are_recognized():
@@ -199,6 +217,12 @@ def test_the_bundle_root_of_the_source_tree_is_the_project():
 def test_the_help_documents_are_the_projects_own():
     assert commands.document("README").startswith("# RUDRA")
     assert commands.document("Limitations").startswith("# RUDRA — Limitations")
+
+
+def test_the_help_readme_leaves_out_the_part_about_building_from_source():
+    readme = commands.document("README")
+    assert "## Using RUDRA" in readme and "## Limitations" in readme
+    assert "For developers" not in readme and "git clone" not in readme and not readme.rstrip().endswith("---")
 
 
 def test_the_marks_and_the_icon_are_where_the_window_looks():
@@ -228,17 +252,33 @@ def test_is_extract_command():
 
 
 def test_extract_summary_for_a_fresh_document(tmp_path):
+    """A summary of `extract` alone cannot say the document is searchable yet: nothing has indexed it."""
     from tests.unit.pdf_fixtures import textbook_pdf
 
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(textbook_pdf())
     result = commands.run(commands.extract(str(pdf)), tmp_path)
     assert result.ok
-    summary = commands.extract_summary(result)
+    summary = commands.extract_summary([result])
     assert summary.ok and not summary.already_had and not summary.partially_processed
     assert summary.document_id and summary.document_id.startswith("DOC-")
     assert summary.pages == "4 pages"
     assert summary.issue_total == 0
+    assert summary.ready is False
+    assert summary.headline == "Added to your knowledge base."
+
+
+def test_extract_summary_says_what_was_stored_when_the_inventory_is_included(tmp_path):
+    from tests.unit.pdf_fixtures import textbook_pdf
+
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(textbook_pdf())
+    extracted = commands.run(commands.extract(str(pdf)), tmp_path)
+    indexed = commands.run(commands.index(), tmp_path)
+    inventory = commands.run(commands.inventory(), tmp_path)
+    assert extracted.ok and indexed.ok and inventory.ok
+    summary = commands.extract_summary([extracted, indexed, inventory])
+    assert summary.ready is True and summary.stored and all(word[0].isdigit() for word in summary.stored)
     assert summary.headline == "Added to your knowledge base."
 
 
@@ -249,7 +289,7 @@ def test_extract_summary_for_an_already_ingested_document(tmp_path):
     pdf.write_bytes(textbook_pdf())
     commands.run(commands.extract(str(pdf)), tmp_path)
     second = commands.run(commands.extract(str(pdf)), tmp_path)
-    summary = commands.extract_summary(second)
+    summary = commands.extract_summary([second])
     assert second.ok and summary.already_had
     assert summary.headline == "This document is already in your knowledge base."
 
@@ -257,9 +297,63 @@ def test_extract_summary_for_an_already_ingested_document(tmp_path):
 def test_extract_summary_for_a_failure(tmp_path):
     result = commands.run(commands.extract(str(tmp_path / "missing.pdf")), tmp_path)
     assert not result.ok
-    summary = commands.extract_summary(result)
-    assert not summary.ok and summary.document_id is None
+    summary = commands.extract_summary([result])
+    assert not summary.ok and summary.document_id is None and summary.ready is False
     assert summary.headline == "That file does not exist."
+
+
+def test_a_document_with_nothing_to_store_is_added_but_says_so(tmp_path):
+    """The window never claims knowledge it does not have: a plain note leaves the inventory empty."""
+    note = tmp_path / "notes.txt"
+    note.write_text("Just some notes.\nNothing technical here at all, only plain sentences about lunch.\n",
+                    encoding="utf-8")
+    results = [commands.run(commands.extract(str(note)), tmp_path)]
+    results.append(commands.run(commands.index(), tmp_path))
+    results.append(commands.run(commands.inventory(), tmp_path))
+    assert all(result.ok for result in results)
+    summary = commands.extract_summary(results)
+    assert summary.ok and summary.empty and not summary.stored
+    assert summary.pages == "1 section"  # a count of one is not "1 sections"
+    assert summary.headline == "Added, but RUDRA found nothing in it to store as knowledge."
+
+
+def test_a_document_that_gave_knowledge_is_not_called_empty(tmp_path):
+    from tests.unit.pdf_fixtures import textbook_pdf
+
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(textbook_pdf())
+    results = [commands.run(commands.extract(str(pdf)), tmp_path)]
+    results.append(commands.run(commands.index(), tmp_path))
+    results.append(commands.run(commands.inventory(), tmp_path))
+    summary = commands.extract_summary(results)
+    assert summary.stored and not summary.empty
+
+
+def test_a_file_that_cannot_be_added_comes_with_what_to_do_about_it(tmp_path):
+    """The reason RUDRA writes for a person (save it as .docx) reaches the window, not only the headline."""
+    old = tmp_path / "legacy.doc"
+    old.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1not a real doc")
+    result = commands.run(commands.extract(str(old)), tmp_path)
+    assert not result.ok
+    summary = commands.extract_summary([result])
+    assert summary.headline == "RUDRA cannot import that kind of file."
+    assert any(".docx" in line for line in summary.advice)
+    assert all("Traceback" not in line and "\\" not in line for line in summary.advice)
+
+
+def test_failure_advice_is_empty_without_a_structured_report(tmp_path):
+    result = commands.run(["no-such-command"], tmp_path)
+    assert commands.failure_advice(result) == ()
+
+
+def test_index_command():
+    assert commands.index() == ["index"]
+
+
+def test_inventory_command():
+    assert commands.inventory() == ["inventory", "--json"]
+    assert commands.inventory("EQUATION", "DOC-00000001") == [
+        "inventory", "--json", "--knowledge-type", "EQUATION", "--in-document", "DOC-00000001"]
 
 
 # ---------------------------------------------------------------- uninstalling

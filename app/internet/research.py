@@ -62,7 +62,7 @@ MAX_SENTENCES = 5
 INSUFFICIENT = "Insufficient authorized information."
 NEEDED = ("Internet authorization is needed to answer it: RUDRA searches only a website you name - run "
           "the question again with --site URL. Official, academic, government, manufacturer, reputable "
-          "or broad search needs a search provider RUDRA does not have (ADR 0050 P18-1).")
+          "or broad search needs a search provider RUDRA does not have.")
 
 
 class ResearchStatus(StrEnum):
@@ -152,8 +152,8 @@ def subject_of(question: str) -> str:
     intents = interpretation.intents
     if (interpretation.status is not InterpretationStatus.INTERPRETED or len(intents) != 1
             or intents[0].intent_type != "QUERY_CONCEPT" or not intents[0].target):
-        raise refuse(f"{question!r} is not a question research answers in Phase 18.",
-                     "Ask what a thing is, e.g. \"What is a memristor?\" (ADR 0050 P18-2).")
+        raise refuse(f"{question!r} is not a question research can answer.",
+                     "Ask what a thing is, e.g. \"What is a memristor?\".")
     return intents[0].target
 
 

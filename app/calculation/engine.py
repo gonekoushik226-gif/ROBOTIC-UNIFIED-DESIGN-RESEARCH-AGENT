@@ -96,12 +96,12 @@ WRITES_NOTHING_NOTE = (
     "(ADR 0041 P11-6, N5 = (a))."
 )
 PENDING_NOTE = (
-    "Verification status PENDING: this result is not independently verified; "
-    "verification is Phase 12 (ADR 0041 P11-7). The dimensional checks are checks, not "
+    "Verification status PENDING: this result is not independently verified by this command "
+    "(`solve` and `provenance --answer` do verify it). The dimensional checks are checks, not "
     "verification."
 )
 NOT_A_FACT_NOTE = (
-    "A calculated value is a calculation result, never a sourced fact (section 94)."
+    "A calculated value is a calculation result, never a sourced fact."
 )
 
 
@@ -265,7 +265,7 @@ class _Calculation:
                 ]
                 support = (
                     "stored conflict information names the admitted equation "
-                    f"({', '.join(named)}); both claims are shown, neither is selected (P11-19)"
+                    f"({', '.join(named)}); both claims are shown, neither is selected"
                 )
             found.append(
                 _Candidate(
@@ -338,13 +338,13 @@ class _Calculation:
                     record.methods.append(self._method(
                         candidate, MethodState.ON_CYCLE,
                         f"it uses {', '.join(uses)}, on the formula cycle {' -> '.join(cycle)}; "
-                        "a cycle is reported, never looped (P11-17)",
+                        "a cycle is reported, never looped",
                     ))
                 elif name not in self.supplied:
                     record.methods.append(self._method(
                         candidate, MethodState.ON_CYCLE,
                         f"{name} is on the formula cycle {' -> '.join(cycle)} and is not supplied; "
-                        "a symbol on a cycle is not calculated (P11-17)",
+                        "a symbol on a cycle is not calculated",
                     ))
                 else:
                     record.methods.append(self._evaluate(name, candidate))
@@ -618,29 +618,29 @@ class _Calculation:
         notes = [WRITES_NOTHING_NOTE, PENDING_NOTE, NOT_A_FACT_NOTE]
         if self.admission is None:
             notes.append("knowledge.db was not opened: the request admits no stored equation "
-                         "(ADR 0043 P11-29).")
+                         ".")
         else:
             admitted, refused = self.admission.admitted, self.admission.refused
             if admitted is not None:
                 notes.append(
                     f"The admitted equation {admitted.knowledge.id} is document text labelled "
-                    "UNCERTAIN (I-C). Its symbols are bound to the request's symbols by exact "
+                    "UNCERTAIN. Its symbols are bound to the request's symbols by exact "
                     "text only; nothing stored says what they mean (ADR 0042, the weakest point)."
                 )
             if refused is not None:
                 notes.append(
                     f"The admitted item {refused.knowledge_id} was not admitted: "
-                    f"{refused.reason.value}. It was not used (ADR 0042 P11-19)."
+                    f"{refused.reason.value}. It was not used."
                 )
         if any(r.conditional_on for r in results):
             used = self._ordered_assumptions(c for r in results for c in r.conditional_on)
             notes.append("Results marked conditional rest on the request's assumption(s) "
-                         f"{', '.join(used)} (P11-21); they are not established without them.")
+                         f"{', '.join(used)}; they are not established without them.")
         if withheld != Withheld():
             notes.append(
                 "Stored items without evidence from a source that is authorised and in the "
                 f"requested scope ({self.request.scope.value}), or stored DELETED or ARCHIVED, "
-                "were not used; they are counted under withheld (P9-5, P9-23)."
+                "were not used; they are counted under withheld."
             )
         return tuple(notes)
 

@@ -44,8 +44,11 @@ def test_fractions(text):
 
 
 def test_a_linear_fraction_takes_the_operands_that_touch_it():
-    items = only("I = V / Rtotal")
-    assert items[1] == Atom("=", "rel") and items[2] == Frac(Atom("V", "var"), Atom("Rtotal", "var"))
+    items = only("I = V / Speed")
+    assert items[1] == Atom("=", "rel") and items[2] == Frac(Atom("V", "var"), Atom("Speed", "var"))
+    # a symbol with its usual subscript word keeps the subscript inside the fraction
+    total = only("I = V / Rtotal")[2]
+    assert total == Frac(Atom("V", "var"), Script(Atom("R", "var"), None, Row((Atom("total", "text"),))))
     half, *rest = only("1/2 m v^2")
     assert half == Frac(Atom("1", "num"), Atom("2", "num")) and rest[0] == Atom("m", "var")
     grouped = only("(a + b)/(c + d)")[0]
@@ -73,7 +76,7 @@ def test_subscripts(text, sub):
 
 
 def test_a_word_with_digits_is_not_split():
-    assert only("Rtotal") == (Atom("Rtotal", "var"),)
+    assert only("Speed") == (Atom("Speed", "var"),)
 
 
 @pytest.mark.parametrize(("text", "index"), [("sqrt(x)", None), ("√x", None), (r"\sqrt{x}", None),
@@ -219,10 +222,55 @@ def test_the_svg_keeps_text_as_text():
 
 
 def test_answer_lines_that_hold_formulas():
-    assert m.formula_parts("Equation: P = dW/dt") == ("Equation: ", "P = dW/dt")
-    assert m.formula_parts("Formula: I = V / R") == ("Formula: ", "I = V / R")
-    assert m.formula_parts(r"The slope is \frac{dy}{dx}") == ("", r"The slope is \frac{dy}{dx}")
-    assert m.formula_parts("Definition: Resistance is the opposition to current.") is None
+    assert m.segments("Equation: P = dW/dt") == [("text", "Equation: "), ("math", "P = dW/dt")]
+    assert m.segments("Formula: I = V / R") == [("text", "Formula: "), ("math", "I = V / R")]
+    assert m.segments(r"The slope is \frac{dy}{dx}") == [("text", "The slope is "), ("math", r"\frac{dy}{dx}")]
+    assert m.segments("Definition: Resistance is the opposition to current.") is None
+
+
+def test_formulas_in_a_sentence_are_found_without_the_words_around_them():
+    line = r"Here E = \frac{1}{2} m v^{2} is the energy, and f = \frac{1}{T}."
+    assert m.segments(line) == [("text", "Here "), ("math", r"E = \frac{1}{2} m v^{2}"),
+                                ("text", " is the energy, and "), ("math", r"f = \frac{1}{T}"), ("text", ".")]
+
+
+@pytest.mark.parametrize("line, formula", [
+    (r"The speed is \(v = \frac{d}{t}\) in metres per second.", r"v = \frac{d}{t}"),
+    (r"The speed is \[ v = \frac{d}{t} \] here.", r"v = \frac{d}{t}"),
+    (r"Energy is $$E = mc^{2}$$ in joules.", "E = mc^{2}"),
+    (r"Energy is $E = m c^2$ in joules.", "E = m c^2"),
+])
+def test_fenced_math_is_typeset_and_its_delimiters_are_never_shown(line, formula):
+    pieces = m.segments(line)
+    assert [text for kind, text in pieces if kind == "math"] == [formula]
+    assert all("$" not in text and "\\(" not in text and "\\[" not in text for _, text in pieces)
+
+
+def test_a_dollar_amount_is_money_not_a_formula():
+    assert m.segments("It costs $5 and then $6 more.") is None
+
+
+@pytest.mark.parametrize("text", [r"\( f = \frac{1}{T} \)", r"\[ f = \frac{1}{T} \]", "$$f = \\frac{1}{T}$$",
+                                  "$f = \\frac{1}{T}$"])
+def test_a_whole_fenced_formula_parses_like_the_bare_one(text):
+    assert m.parse(text) == m.parse(r"f = \frac{1}{T}")
+    assert m.strip_delimiters(text) == r"f = \frac{1}{T}"
+
+
+def test_a_symbol_with_its_usual_subscript_word_is_set_with_a_lowered_upright_word():
+    (symbol,) = only("Rtotal")
+    assert symbol == Script(Atom("R", "var"), None, Row((Atom("total", "text"),)))
+    assert m.parse("Vout = Vin * R2 / (R1 + R2)").items[0] == Script(Atom("V", "var"), None, Row((Atom("out", "text"),)))
+    # an ordinary name is not split into a symbol and a "subscript"
+    assert only("Force") == (Atom("Force", "var"),)
+    assert only("Area") == (Atom("Area", "var"),)
+
+
+def test_a_unit_after_a_thin_space_is_not_spaced_twice():
+    box = layout(r"12\,\mathrm{V}", 20.0)
+    gap = [item[1] for item in box.items if item[0] == "text"]
+    # "12", then the unit starts one thin space (0.17 em) after the number's end
+    assert gap[1] - gap[0] == pytest.approx(m.ApproximateMetrics().measure("12", 20.0, "roman") + 0.17 * 20.0)
 
 
 # ---------------------------------------------------------------- in the window

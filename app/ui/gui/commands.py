@@ -17,6 +17,7 @@ import argparse
 import contextlib
 import ctypes
 import io
+import json
 import re
 import shlex
 import subprocess
@@ -103,13 +104,12 @@ def is_answer_line(line: str) -> bool:
 
 
 def startup_summary(result: CommandResult) -> str:
-    """The startup report in a few lines, for the compact window: who, whether ready, what needs attention."""
+    """The startup report in a few words, for the compact window: ready, or what needs attention."""
     if not result.ok:
-        return f"Startup did not complete: {result.meaning} (exit {result.exit_code}).\n{result.stderr.strip()}"
-    lines = result.stdout.splitlines()
-    summary = [lines[0] if lines else "RUDRA", "Ready: startup complete."]
-    attention = [line.strip() for line in lines if line.startswith("  [")]
-    summary += ["Attention:", *(f"  {line}" for line in attention)] if attention else ["Nothing needs attention."]
+        return f"RUDRA could not start properly (exit {result.exit_code}).\n{result.stderr.strip()}"
+    attention = startup_attention(result)
+    summary = ["RUDRA is ready."]
+    summary += ["Attention:", *(f"  {line}" for line in attention)] if attention else []
     return "\n".join(summary)
 
 
@@ -132,14 +132,116 @@ def failure_headline(result: CommandResult) -> str:
     return f"RUDRA could not complete this (exit {result.exit_code}: {result.meaning})."
 
 
+def failure_advice(result: CommandResult) -> tuple[str, ...]:
+    """What a failed command's own report tells the person to do, in its own words.
+
+    The reason is shown when the report was written for people (a bad request: "save the file as
+    .docx"); a parser's or the system's wording is not. The first suggested next step is added.
+    """
+    lines = result.stderr.splitlines()
+    advice: list[str] = []
+    for index, line in enumerate(lines):
+        if not line.startswith(_FAILURE_BANNER):
+            continue
+        written_for_people = "[INVALID_INPUT]" in line or "[MISSING_INFORMATION]" in line
+        for follower in lines[index + 2:]:
+            if follower.startswith("Reason:") and written_for_people:
+                reason = follower[len("Reason:"):].strip()
+                if len(reason) < 220 and ":\\" not in reason:  # a path in the reason would only confuse
+                    advice.append(reason)
+            elif follower.strip().startswith("1. "):
+                advice.append(follower.strip()[3:].rstrip("."))
+                break
+        break
+    return tuple(advice)
+
+
 def is_extract_command(argv: list[str] | tuple[str, ...]) -> bool:
     """Adding a document (`extract`): the window shows a plain summary, detail on request."""
     return bool(argv) and argv[0] == "extract"
 
 
+def index() -> list[str]:
+    """Bring the derived keyword-search index up to date (the unchanged `index` command): Add
+    document runs it right after `extract`, so what was added is searchable at once."""
+    return ["index"]
+
+
+def inventory(kind: str = "", document: str = "") -> list[str]:
+    """What RUDRA knows (the `inventory` command, as JSON): summaries, or - for a kind of
+    knowledge - the items themselves, optionally only those of one document."""
+    argv = ["inventory", "--json"]
+    if kind:
+        argv += ["--knowledge-type", kind]
+    if document:
+        argv += ["--in-document", document]
+    return argv
+
+
+def is_friendly_command(argv: list[str] | tuple[str, ...]) -> bool:
+    """Commands whose result the window shows in its own words, never as a command transcript."""
+    return bool(argv) and argv[0] in ("ask", "extract", "inventory")
+
+
+def working_text(argv: list[str] | tuple[str, ...]) -> str:
+    """What the output says while a command runs: in words, not the command line."""
+    command = argv[0] if argv else "start"
+    return {
+        "extract": "Adding the document: reading its pages and finding what it states. This can take a minute "
+                   "for a long book.",
+        "ask": "Looking through your documents...",
+        "inventory": "Listing what RUDRA knows...",
+    }.get(command, "Working...")
+
+
+def finished_state(result: CommandResult) -> tuple[str, bool]:
+    """The status bar after a command whose result the window words itself: (text, all is well).
+
+    An answer of "I do not know" is an answer, not a failure, so asking never leaves an error
+    code in the status bar; only a document that could not be added does.
+    """
+    command = result.argv[0] if result.argv else ""
+    if command == "extract":
+        return ("READY · document added", True) if result.ok else ("NOT ADDED · see the message", False)
+    if command == "ask":
+        if result.stdout.lstrip().startswith("{") or result.ok or result.exit_code == 3:
+            return "READY · answered", True
+        return "NOT ANSWERED · see the message", False
+    return ("READY", True) if result.ok else ("NOT COMPLETED · see the message", False)
+
+
+def startup_attention(result: CommandResult) -> tuple[str, ...]:
+    """What the startup report says is limited on this computer, as one plain line each:
+    "[WARNING] RAM: Little headroom ..." becomes "Memory is low: Little headroom ..."."""
+    names = {"RAM": "Memory", "Disk": "Disk space", "OCR": "Text recognition"}
+    found = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("  ["):
+            continue
+        match = re.match(r"\s*\[(\w+)\]\s+([^:]+):\s*(.*)", line)
+        if match:
+            found.append(f"{names.get(match.group(2).strip(), match.group(2).strip())}: {match.group(3)}")
+    return tuple(found)
+
+
+def welcome_facts(result: CommandResult) -> dict:
+    """What the first screen says about the knowledge base: counts, from the `inventory` command."""
+    try:
+        data = json.loads(result.stdout) if result.stdout.strip() else {}
+    except ValueError:
+        data = {}
+    totals = data.get("totals") or {}
+    counts = totals.get("counts") or {}
+    return {"documents": int(totals.get("documents") or 0), "counts": counts,
+            "usable": (data.get("calculation") or {}).get("usable", 0),
+            "uncertain": totals.get("uncertain", 0)}
+
+
 @dataclass(frozen=True)
 class ExtractSummary:
-    """What `extract`'s own report means for someone who just wants their document added."""
+    """What `extract`'s (and, when it ran, `index`'s) own report means for someone who
+    just wants their document added and askable - every query mode, not only the ones
+    that never needed the derived index."""
 
     ok: bool
     already_had: bool
@@ -148,16 +250,42 @@ class ExtractSummary:
     ocr_count: int
     issue_total: int
     partially_processed: bool
+    #: The document can be searched and asked about straight away.
+    ready: bool
     headline: str
+    #: For a document that could not be added: what to do about it.
+    advice: tuple[str, ...] = ()
+    #: Added, but nothing in it was stored as knowledge (no definitions, equations or the like).
+    empty: bool = False
+    #: What RUDRA found in it, in plain words (from `inventory`), when that was read.
+    stored: tuple[str, ...] = ()
+    not_stored: tuple[str, ...] = ()
+    linked: str | None = None
+
+
+def _counted(number: str, unit: str) -> str:
+    """"1 page", "137 pages": the unit agrees with the number."""
+    if number != "1":
+        return f"{number} {unit}"
+    return f"{number} " + {"pages": "page", "slides": "slide", "sections": "section", "sheet parts": "sheet part",
+                           "images/pages": "image/page"}.get(unit, unit)
 
 
 def _field(lines: list[str], prefix: str) -> str | None:
     return next((line[len(prefix):].strip() for line in lines if line.startswith(prefix)), None)
 
 
-def extract_summary(result: CommandResult) -> ExtractSummary:
+def extract_summary(results: list[CommandResult]) -> ExtractSummary:
     """`extract`'s own plain-English report (app.ui.cli.main._cmd_extract), read for the
-    window's summary - never a second source of truth about what happened."""
+    window's summary - never a second source of truth about what happened - and, when the
+    `inventory` result that follows it is given, what RUDRA found in the document.
+
+    `results` is `[extract's result]`, or `extract`, `index` and `inventory` in that order: Add
+    Document runs `index` and `inventory` right after a successful `extract`, so what was added
+    is searchable at once and the person is told what was stored and what was not; a raw
+    `extract` typed on the Command page runs alone.
+    """
+    result = results[0]
     lines = result.stdout.splitlines()
     document_line = _field(lines, "Document   :")
     already_had = bool(document_line and "already ingested" in document_line)
@@ -166,7 +294,7 @@ def extract_summary(result: CommandResult) -> ExtractSummary:
     if document_line:
         found = re.search(r"(\d[\d,]*) (pages|slides|sheet parts|images/pages|sections)\b", document_line)
         if found:
-            pages = f"{found.group(1)} {found.group(2)}"
+            pages = _counted(found.group(1), found.group(2))
     ocr_line = _field(lines, "OCR        :")
     ocr_match = re.match(r"(\d+)", ocr_line) if ocr_line else None
     ocr_count = int(ocr_match.group(1)) if ocr_match else 0
@@ -184,16 +312,53 @@ def extract_summary(result: CommandResult) -> ExtractSummary:
                 issue_total += int(parts[-1])
     status_line = _field(lines, "Document status:")
     partially_processed = bool(status_line and "PARTIALLY_PROCESSED" in status_line)
+    indexed = next((r for r in results[1:] if r.argv and r.argv[0] == "index"), None)
+    ready = result.ok and (already_had or (indexed is not None and indexed.ok))
     if not result.ok:
         headline = failure_headline(result)
     elif already_had:
         headline = "This document is already in your knowledge base."
-    elif issue_total or partially_processed:
-        headline = "Added to your knowledge base, with some extraction warnings."
+    elif partially_processed:
+        headline = "Added to your knowledge base. Some of its content could not be stored."
     else:
         headline = "Added to your knowledge base."
+    listing = next((r for r in results[1:] if r.argv and r.argv[0] == "inventory"), None)
+    stored, not_stored, linked = _found_in(listing, document_id)
+    empty = bool(result.ok and not already_had and listing is not None and listing.ok and not stored
+                 and not not_stored)
+    if empty:
+        headline = "Added, but RUDRA found nothing in it to store as knowledge."
+    advice = () if result.ok else failure_advice(result)
     return ExtractSummary(result.ok, already_had, document_id, pages, ocr_count, issue_total,
-                          partially_processed, headline)
+                          partially_processed, ready, headline, advice, empty, stored, not_stored, linked)
+
+
+def _found_in(result: CommandResult | None, document_id: str | None) -> tuple[tuple[str, ...], tuple[str, ...], str | None]:
+    """What the `inventory` command says one document gave: stored kinds, what was not stored, links."""
+    if result is None or not result.ok or document_id is None:
+        return (), (), None
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        return (), (), None
+    document = next((d for d in data.get("documents", ()) if d.get("id") == document_id), None)
+    if document is None:
+        return (), (), None
+    labels = {"CONCEPT": "concept", "DEFINITION": "definition", "EQUATION": "equation", "VARIABLE": "variable",
+              "UNIT": "unit", "PROPERTY": "property", "RULE": "rule", "RELATIONSHIP": "relationship",
+              "EXAMPLE": "example", "PROCEDURE": "procedure"}
+    plural = {"property": "properties"}
+    stored = []
+    for kind, label in labels.items():
+        count = document.get("stored", {}).get(kind, 0)
+        if count:
+            stored.append(f"{count} {plural.get(label, label + 's') if count != 1 else label}")
+    not_stored = tuple(f"{group['count']} {group['short']}" for group in document.get("problems", ())
+                       if group.get("not_stored"))
+    linked = None
+    if document.get("linked"):
+        linked = f"{document['linked']} already known from other evidence"
+    return tuple(stored), not_stored, linked
 
 
 def display_command(argv: list[str] | tuple[str, ...]) -> str:
@@ -351,18 +516,18 @@ def approval(argv: list[str] | tuple[str, ...], project_root: Path) -> Approval 
     where = f"the knowledge database {database}" if database else "this project's knowledge database"
     backup = ""
     if database is not None and database.exists():
-        backup = ("\n\nThat database already holds knowledge. To be able to go back, export a backup "
-                  "first (Backup page, Export Knowledge Base).")
+        backup = ("\n\nYour knowledge base already holds knowledge. To be able to go back, use Settings > "
+                  "Back up your knowledge first.")
     if command == "db":
-        return Approval("Create or upgrade the database",
-                        f"This creates {where}, or migrates it to the current schema after taking a "
-                        f"backup.{backup}")
+        return Approval("Create or upgrade the knowledge base",
+                        f"This creates {where}, or upgrades it to the current format after taking a safety "
+                        f"copy.{backup}")
     if command == "extract":
-        return Approval("Import a document",
-                        f"This copies the document into RUDRA's document store and writes its knowledge to "
-                        f"{where}, creating or migrating the database first if needed.{backup}")
+        return Approval("Add a document",
+                        f"RUDRA keeps a private copy of the document and adds what it finds to {where}. Your "
+                        f"original file is not changed.{backup}")
     if command in KNOWLEDGE_WRITERS:
-        return Approval(f"Run '{command}'", f"'{command}' writes to {where}.{backup}")
+        return Approval(f"Run '{command}'", f"'{command}' changes {where}.{backup}")
     if command == "research" and _flag(argv, "--site"):
         return Approval("Retrieve a web page",
                         "This connects to the Internet to retrieve the one page you named, and "
@@ -431,6 +596,9 @@ def document(title: str) -> str:
     """A document the Help page shows, read from the source tree or the packaged program."""
     path = bundle_root() / DOCUMENTS[title]
     try:
-        return path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         return f"{DOCUMENTS[title]} could not be read: {exc}"
+    # The part of the README about building RUDRA from source is not for someone using it.
+    text = text.split("\n# For developers", 1)[0].rstrip().removesuffix("---").rstrip()
+    return re.sub(r"\*\*For developers\*\*\n(?:\n- .*)+\n", "", text) + "\n"

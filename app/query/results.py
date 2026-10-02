@@ -415,7 +415,7 @@ class DocumentIngestion:
 
 KEYWORD_LABEL = (
     "KEYWORD HIT - stored text matches the term; this is not a stored link to any "
-    "concept and is not presented as knowledge about one (ADR 0035 P9-3)"
+    "concept and is not presented as knowledge about one"
 )
 
 

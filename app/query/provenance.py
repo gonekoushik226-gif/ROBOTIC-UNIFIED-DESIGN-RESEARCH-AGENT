@@ -93,7 +93,7 @@ def run_notes(provenance: Provenance) -> tuple[str, ...]:
             "Evidence from runs with extractor version below 4 is cited ("
             + ", ".join(early)
             + "): stage 15 never compared it, so identical knowledge may appear as "
-            "separate items until `merge` is run (ADR 0036 P9-16)."
+            "separate items until `merge` is run."
         )
     return tuple(notes)
 

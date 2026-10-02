@@ -1384,3 +1384,173 @@ def external_claims(connection: sqlite3.Connection, canonical_name: str, method:
                                        (occurrence.knowledge_id,)).fetchone()
         pairs.append((from_row(KnowledgeObject, knowledge), occurrence))
     return tuple(pairs)
+
+
+# ------------------------------------------- choosing equations to calculate with
+
+
+def active_equations(connection: sqlite3.Connection) -> tuple[tuple[KnowledgeObject, Equation], ...]:
+    """Every ACTIVE equation knowledge object with its ACTIVE stored `equation` row, by counter.
+
+    An object that does not have exactly one such row is left out: a calculation will not
+    choose between several statements of one equation, and cannot use none (ADR 0042
+    P11-19). Reads only.
+    """
+    objects = connection.execute(
+        "SELECT * FROM knowledge_object WHERE knowledge_type = ? AND lifecycle_status = ? "
+        f"ORDER BY {_counter('id')}",
+        (KnowledgeType.EQUATION.value, LifecycleStatus.ACTIVE.value),
+    ).fetchall()
+    rows: dict[str, list[Equation]] = {}
+    for row in connection.execute(
+        "SELECT * FROM equation WHERE lifecycle_status = ? AND knowledge_id IS NOT NULL "
+        f"ORDER BY {_counter('id')}",
+        (LifecycleStatus.ACTIVE.value,),
+    ):
+        equation = from_row(Equation, row)
+        rows.setdefault(equation.knowledge_id, []).append(equation)
+    pairs = []
+    for row in objects:
+        knowledge = from_row(KnowledgeObject, row)
+        found = rows.get(knowledge.id, [])
+        if len(found) == 1:
+            pairs.append((knowledge, found[0]))
+    return tuple(pairs)
+
+
+def active_variables(connection: sqlite3.Connection) -> tuple[tuple[KnowledgeObject, "Variable"], ...]:
+    """Every ACTIVE variable knowledge object with its ACTIVE stored `variable` row, by counter.
+
+    These are the symbols a document introduced with a meaning ("where V is the voltage").
+    Reads only.
+    """
+    from app.models.entities import Variable
+
+    objects = connection.execute(
+        "SELECT * FROM knowledge_object WHERE knowledge_type = ? AND lifecycle_status = ? "
+        f"ORDER BY {_counter('id')}",
+        (KnowledgeType.VARIABLE.value, LifecycleStatus.ACTIVE.value),
+    ).fetchall()
+    rows: dict[str, list] = {}
+    for row in connection.execute(
+        "SELECT * FROM variable WHERE lifecycle_status = ? AND knowledge_id IS NOT NULL "
+        f"ORDER BY {_counter('id')}",
+        (LifecycleStatus.ACTIVE.value,),
+    ):
+        variable = from_row(Variable, row)
+        rows.setdefault(variable.knowledge_id, []).append(variable)
+    pairs = []
+    for row in objects:
+        knowledge = from_row(KnowledgeObject, row)
+        found = rows.get(knowledge.id, [])
+        if len(found) == 1:
+            pairs.append((knowledge, found[0]))
+    return tuple(pairs)
+
+
+def evidence_for_many(
+    connection: sqlite3.Connection, subject_ids: Iterable[str]
+) -> dict[str, tuple[dict, ...]]:
+    """`evidence_for` for many subjects at once: the `evidence` view's rows, by subject.
+
+    One query per batch of subjects instead of one per subject, in the same order
+    `evidence_for` uses. A subject with no evidence is absent. Reads only.
+    """
+    wanted = list(dict.fromkeys(subject_ids))
+    found: dict[str, list[dict]] = {}
+    for start in range(0, len(wanted), 400):
+        batch = wanted[start:start + 400]
+        marks = ", ".join("?" for _ in batch)
+        sql = (f"SELECT * FROM evidence WHERE subject_id IN ({marks}) "
+               "ORDER BY subject_id, subject_kind, document_id, page_number, id")
+        for row in connection.execute(sql, tuple(batch)):
+            found.setdefault(row["subject_id"], []).append(dict(row))
+    return {subject: tuple(rows) for subject, rows in found.items()}
+
+
+# ------------------------------------------------ what the knowledge base holds
+
+
+def knowledge_objects_of_types(
+    connection: sqlite3.Connection, types: Iterable[KnowledgeType]
+) -> tuple[KnowledgeObject, ...]:
+    """Every knowledge object of these types that has not been deleted or archived, by counter.
+
+    Lifecycle is returned as stored (a superseded duplicate is still listed, labelled by the
+    caller). Reads only.
+    """
+    wanted = tuple(t.value for t in types)
+    if not wanted:
+        return ()
+    marks = ", ".join("?" for _ in wanted)
+    rows = connection.execute(
+        f"SELECT * FROM knowledge_object WHERE knowledge_type IN ({marks}) "
+        f"AND lifecycle_status NOT IN ('DELETED', 'ARCHIVED') ORDER BY {_counter('id')}",
+        wanted,
+    ).fetchall()
+    return tuple(from_row(KnowledgeObject, row) for row in rows)
+
+
+def concepts_of_knowledge(connection: sqlite3.Connection) -> dict[str, tuple[str, ...]]:
+    """For each knowledge object an ACTIVE concept points at (DEFINED_BY, HAS_PROPERTY), the
+    names of the concepts that do. How a stored definition says which concept it defines."""
+    found: dict[str, list[str]] = {}
+    rows = connection.execute(
+        "SELECT r.to_knowledge_id, c.canonical_name FROM relationship r JOIN concept c ON c.id = r.from_concept_id "
+        "WHERE r.lifecycle_status = ? AND r.to_knowledge_id IS NOT NULL AND r.relation_type IN (?, ?) "
+        f"ORDER BY {_counter('r.id')}",
+        (LifecycleStatus.ACTIVE.value, RelationType.DEFINED_BY.value, RelationType.HAS_PROPERTY.value),
+    )
+    for knowledge_id, name in rows:
+        found.setdefault(str(knowledge_id), [])
+        if name not in found[str(knowledge_id)]:
+            found[str(knowledge_id)].append(str(name))
+    return {key: tuple(names) for key, names in found.items()}
+
+
+def active_concepts(connection: sqlite3.Connection) -> tuple[Concept, ...]:
+    """Every ACTIVE concept, by counter. Reads only."""
+    rows = connection.execute(
+        f"SELECT * FROM concept WHERE lifecycle_status = ? ORDER BY {_counter('id')}",
+        (LifecycleStatus.ACTIVE.value,),
+    ).fetchall()
+    return tuple(from_row(Concept, row) for row in rows)
+
+
+def relationships_between_concepts(connection: sqlite3.Connection) -> tuple[Relationship, ...]:
+    """Every ACTIVE relationship whose two ends are both concepts, by counter. Reads only."""
+    rows = connection.execute(
+        "SELECT * FROM relationship WHERE lifecycle_status = ? AND from_concept_id IS NOT NULL "
+        f"AND to_concept_id IS NOT NULL ORDER BY {_counter('id')}",
+        (LifecycleStatus.ACTIVE.value,),
+    ).fetchall()
+    return tuple(from_row(Relationship, row) for row in rows)
+
+
+def linked_objects_of_run(connection: sqlite3.Connection, run_id: str) -> int:
+    """Knowledge objects this run found again: it added evidence to an object that other
+    evidence (an earlier run, or another document) already supported."""
+    row = connection.execute(
+        "SELECT count(DISTINCT s.knowledge_id) FROM source_occurrence s WHERE s.extraction_run_id = ? "
+        "AND EXISTS (SELECT 1 FROM source_occurrence o WHERE o.knowledge_id = s.knowledge_id "
+        "            AND (o.extraction_run_id IS NULL OR o.extraction_run_id <> s.extraction_run_id))",
+        (run_id,),
+    ).fetchone()
+    return int(row[0])
+
+
+def possible_duplicates_of_run(connection: sqlite3.Connection, run_id: str) -> int:
+    """Assessments this run recorded as POSSIBLE_DUPLICATE: similar statements kept apart."""
+    row = connection.execute(
+        "SELECT count(*) FROM knowledge_equivalence WHERE extraction_run_id = ? AND outcome = 'POSSIBLE_DUPLICATE'",
+        (run_id,),
+    ).fetchone()
+    return int(row[0])
+
+
+def open_conflict_count(connection: sqlite3.Connection) -> int:
+    """Conflicts between stored claims that are not deleted or archived."""
+    row = connection.execute(
+        "SELECT count(*) FROM conflict WHERE lifecycle_status NOT IN ('DELETED', 'ARCHIVED')"
+    ).fetchone()
+    return int(row[0])

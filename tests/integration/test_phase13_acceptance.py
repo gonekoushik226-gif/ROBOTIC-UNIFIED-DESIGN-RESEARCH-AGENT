@@ -49,7 +49,7 @@ def test_the_command_set_gains_exactly_interpret():
     before = {"start", "env", "config", "paths", "db", "extract", "classify", "lookup", "review",
               "edition", "merge", "query", "index", "reason", "calculate", "provenance", "version"}
     # Phase 14 adds `act` (ADR 0046 P14-13); Phase 13's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"interpret"}
+    assert set(cli_main._COMMANDS) - {"act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"interpret"}
 
 
 def test_open_chrome(root):

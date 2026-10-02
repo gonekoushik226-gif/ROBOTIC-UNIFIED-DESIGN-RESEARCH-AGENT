@@ -81,6 +81,11 @@ SUPERSCRIPTS = dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ", "012
 SUBSCRIPTS = dict(zip("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₙₘₖₗₚₛₜ", "0123456789+-=()aeoxnmklpst"))
 ASCII_OPERATORS = {"<=": "≤", ">=": "≥", "!=": "≠", "->": "→", "=>": "⇒", "+-": "±", "**": "^", "~=": "≈"}
 OPENERS = {"(": ")", "[": "]", "{": "}"}
+#: A capital letter and the subscript word engineers write after it. Only these words: any
+#: other run of letters ("Force", "Area") is a name, not a symbol with a subscript.
+SUBSCRIPT_WORDS = ("total", "tot", "eq", "th", "load", "in", "out", "max", "min", "rms", "avg", "peak", "ref",
+                   "sat", "dc", "ac", "gs", "ds", "ce", "be", "cc", "dd", "ss")
+_NAMED_SUBSCRIPT = re.compile(r"([A-Z])(" + "|".join(sorted(SUBSCRIPT_WORDS, key=len, reverse=True)) + r")")
 
 # ------------------------------------------------------------------ tree
 
@@ -298,6 +303,11 @@ class _Parser:
             return Atom(text, "func")
         if text in GREEK_WORDS:
             return Atom(GREEK_WORDS[text], "greek")
+        # "Rtotal", "Vout", "Rth": a capital with its usual subscript word, set as R with a
+        # lowered upright "total", as a circuits textbook writes them.
+        named = _NAMED_SUBSCRIPT.fullmatch(text)
+        if named:
+            return Script(Atom(named.group(1), "var"), None, Row((Atom(named.group(2), "text"),)))
         # "sinx", "cosθ": a function name run into a one-letter argument.
         for name in sorted(FUNCTIONS, key=len, reverse=True):
             if text.startswith(name) and len(text) == len(name) + 1 and name not in ("lg", "mod", "arg"):
@@ -580,7 +590,7 @@ def parse(text: str) -> Row:
     ``&`` when any row has one, otherwise centred one under another.
     """
     try:
-        rows = _Parser(text).rows(None)
+        rows = _Parser(strip_delimiters(text)).rows(None)
     except (IndexError, KeyError, RecursionError):  # pragma: no cover - defensive
         return Row((Atom(text, "text"),))
     if len(rows) == 1 and len(rows[0]) == 1:
@@ -715,7 +725,7 @@ class _Layout:
         elif isinstance(previous, BigOp):
             before = 0.12 * size
         # A unit or word written as text stands a space apart: 3.84 V.
-        if isinstance(item, Atom) and item.kind == "text" and previous is not None:
+        if isinstance(item, Atom) and item.kind == "text" and previous is not None and not isinstance(previous, Space):
             before = max(before, 0.22 * size)
         # The differential of an integral stands apart: ∫ xⁿ dx, ∫ sin θ dθ.
         if (isinstance(item, Atom) and item.kind == "var" and item.text[:1] == "d" and len(item.text) <= 2
@@ -1144,21 +1154,113 @@ def to_svg(box: Box, color: str = "#111", background: str | None = None, margin:
 # ------------------------------------------------------------------ which text is a formula
 
 _EQUATION_PREFIX = re.compile(r"^(?P<label>(?:Equation|Formula)\s*:\s*)(?P<formula>.+)$")
-_LATEX_HINT = re.compile(r"\\(?:frac|dfrac|sqrt|int|sum|prod|lim|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|"
-                         r"omega|Omega|sin|cos|tan|cdot|times|pm|infty|partial|left|right)\b|[\^_]\{")
+_FORMULA_THEN_WORDS = re.compile(r"^(?P<formula>\S[^;]*? = [^;]*?)(?P<words> would give it, and needs .+)$")
+_LATEX_HINT = re.compile(r"\\(?:frac|dfrac|tfrac|sqrt|int|sum|prod|lim|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|"
+                         r"pi|rho|sigma|tau|phi|psi|omega|Delta|Omega|Sigma|sin|cos|tan|cdot|times|div|pm|infty|"
+                         r"partial|left|right|mathrm|text|mathbf|hat|vec|bar|le|ge|leq|geq|neq|approx|propto|"
+                         r"quad|begin)\b|[\^_]\{")
+#: Math the author fenced off: \( ... \), \[ ... \], $$ ... $$ and $ ... $ (a dollar sign
+#: opens math only when a non-space follows it and the closing one is not followed by a
+#: digit, so "$5 and $6" is money, not a formula).
+_INLINE_MATH = re.compile(
+    r"\\\((?P<paren>.+?)\\\)|\\\[(?P<bracket>.+?)\\\]|\$\$(?P<display>.+?)\$\$"
+    r"|(?<![\\$\w])\$(?=\S)(?P<dollar>[^$\n]*?\S)\$(?![\d$])", re.S)
+_WHOLE_MATH = (("\\(", "\\)"), ("\\[", "\\]"), ("$$", "$$"), ("$", "$"))
+_CONNECTOR = re.compile(r"[=+\-−*/<>≤≥≈≠±×·÷^()\[\]|,]+|[0-9.]+|[A-Za-z]|[Ͱ-Ͽ]")
+_HAS_MATH_MARK = re.compile(r"[\\^_{}]")
 
 
-def formula_parts(line: str) -> tuple[str, str] | None:
-    """(label, formula) when an answer line holds a formula to typeset, else None.
+def strip_delimiters(text: str) -> str:
+    """The formula inside ``\\( ... \\)``, ``\\[ ... \\]``, ``$$ ... $$`` or ``$ ... $``; else the text."""
+    stripped = text.strip()
+    for opener, closer in _WHOLE_MATH:
+        if (len(stripped) > len(opener) + len(closer) and stripped.startswith(opener)
+                and stripped.endswith(closer)):
+            inner = stripped[len(opener):len(stripped) - len(closer)]
+            if opener == "$" and "$" in inner:
+                continue  # "$a$ and $b$" is two formulas with words between, not one
+            return inner.strip()
+    return text
 
-    Lines labelled ``Equation:`` or ``Formula:`` - how RUDRA's answers present a stored
-    equation - and any line written in LaTeX notation.
+
+def _math_runs(text: str) -> list[tuple[str, str]]:
+    """Text with undelimited LaTeX inside it, split into text and math pieces.
+
+    A token is math when it carries a backslash command, a brace, ``^`` or ``_``; the
+    operators, numbers and single letters touching it belong to the same formula
+    ("where E = \\frac{1}{2} m v^{2} is ..."). Words end it.
     """
-    match = _EQUATION_PREFIX.match(line.strip())
+    tokens = [(m.start(), m.end(), m.group()) for m in re.finditer(r"\S+", text)]
+    mathy = [bool(_HAS_MATH_MARK.search(token)) for _, _, token in tokens]
+    if not any(mathy):
+        return [("text", text)]
+    weak = [not mathy[i] and _CONNECTOR.fullmatch(tokens[i][2]) is not None and tokens[i][2] not in ("a", "A", "I")
+            for i in range(len(tokens))]
+    inside = list(mathy)
+    for index, strong in enumerate(mathy):
+        if not strong:
+            continue
+        for step in (-1, 1):
+            at = index + step
+            while 0 <= at < len(tokens) and weak[at]:
+                inside[at] = True
+                at += step
+    pieces: list[tuple[str, str]] = []
+    position = 0
+    index = 0
+    while index < len(tokens):
+        if not inside[index]:
+            index += 1
+            continue
+        end = index
+        while end + 1 < len(tokens) and inside[end + 1]:
+            end += 1
+        start_at, stop_at = tokens[index][0], tokens[end][1]
+        # Closing punctuation stays with the sentence, not the formula.
+        while stop_at > start_at and text[stop_at - 1] in ".,;:?!":
+            stop_at -= 1
+        if start_at > position:
+            pieces.append(("text", text[position:start_at]))
+        pieces.append(("math", text[start_at:stop_at]))
+        position = stop_at
+        index = end + 1
+    if position < len(text):
+        pieces.append(("text", text[position:]))
+    return pieces
+
+
+def segments(line: str) -> list[tuple[str, str]] | None:
+    """A line of an answer as ("text", ...) and ("math", ...) pieces, or None if it has no math.
+
+    The math pieces are what the window typesets in place of the notation: lines labelled
+    ``Equation:`` or ``Formula:`` (how RUDRA presents a stored equation), math fenced by
+    ``\\( \\)``, ``\\[ \\]``, ``$$ $$`` or ``$ $``, and LaTeX written without fences.
+    """
+    stripped = line.strip()
+    match = _EQUATION_PREFIX.match(stripped)
     if match:
-        return match.group("label"), match.group("formula").strip()
+        return [("text", match.group("label")), ("math", strip_delimiters(match.group("formula")))]
+    # "P = V * I would give it, and needs I": the formula first, then the words about it.
+    match = _FORMULA_THEN_WORDS.match(stripped)
+    if match:
+        return [("math", match.group("formula").strip()), ("text", match.group("words"))]
+    pieces: list[tuple[str, str]] = []
+    position = 0
+    for found in _INLINE_MATH.finditer(line):
+        if found.start() > position:
+            pieces.extend(_math_runs(line[position:found.start()]) if _LATEX_HINT.search(
+                line[position:found.start()]) else [("text", line[position:found.start()])])
+        pieces.append(("math", next(group for group in found.groupdict().values() if group is not None).strip()))
+        position = found.end()
+    if pieces:
+        rest = line[position:]
+        if rest:
+            pieces.extend(_math_runs(rest) if _LATEX_HINT.search(rest) else [("text", rest)])
+        return pieces
     if _LATEX_HINT.search(line):
-        return "", line.strip()
+        runs = _math_runs(line)
+        if any(kind == "math" for kind, _ in runs):
+            return runs
     return None
 
 

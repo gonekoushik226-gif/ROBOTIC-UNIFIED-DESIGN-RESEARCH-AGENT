@@ -172,7 +172,7 @@ class Stage15:
                         f"({record.id}, basis {pair.basis}"
                         + (f", shared name \"{pair.shared_name}\"" if pair.shared_name else "")
                         + (f", edge {pair.relationship_id}" if pair.relationship_id else "")
-                        + "). They are not merged (Part 2 section 44)."
+                        + "). They are not merged."
                     ),
                 )
             )

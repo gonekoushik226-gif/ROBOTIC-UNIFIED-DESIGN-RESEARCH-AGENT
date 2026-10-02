@@ -73,7 +73,7 @@ def check_declaration(repository: Repository, document_id: str, application: str
     existing = declaration_of(repository, document_id)
     if existing is not None and not same_application(existing.application, name):
         raise refuse(f"{document_id} is already declared the manual of {existing.application!r}.",
-                     "A recorded declaration is never rewritten (ADR 0049 P17-2).")
+                     "A recorded declaration is never rewritten.")
 
 
 def declare(repository: Repository, document_id: str, application: str) -> tuple[Declaration, bool]:

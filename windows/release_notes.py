@@ -1,6 +1,6 @@
 """Print the release notes of one version, from CHANGELOG.md, followed by the download notes.
 
-    python windows/release_notes.py 0.1.0 > release-notes.md
+    python windows/release_notes.py 1.0.0 > release-notes.md
 """
 
 from __future__ import annotations

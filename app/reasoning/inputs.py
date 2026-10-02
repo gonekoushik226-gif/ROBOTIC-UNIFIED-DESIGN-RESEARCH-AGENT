@@ -65,7 +65,7 @@ def resolve_node(repository: Repository, reference: str, what: str) -> tuple[Con
         raise refuse(
             f"The {what} node {reference!r} does not resolve to a concept.",
             "No stored concept has that identifier or an ACTIVE alias with that exact name "
-            "(D-30); DELETED and ARCHIVED concepts are not used (P9-23).",
+            "; DELETED and ARCHIVED concepts are not used.",
         )
     return tuple(usable)
 

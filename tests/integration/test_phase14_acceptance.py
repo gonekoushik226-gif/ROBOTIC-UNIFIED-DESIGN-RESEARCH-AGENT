@@ -43,7 +43,7 @@ def test_the_command_set_gains_exactly_act():
     before = {"start", "env", "config", "paths", "db", "extract", "classify", "lookup", "review", "edition",
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 14's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"act"}
+    assert set(cli_main._COMMANDS) - {"do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"act"}
 
 
 def test_open_application_for_notepad_and_calculator(tmp_path):

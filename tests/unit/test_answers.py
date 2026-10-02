@@ -110,3 +110,54 @@ def test_an_action_part_reports_each_steps_verification():
 def test_nothing_is_made_up_from_an_empty_answer():
     part = answers.from_query(1, "x", "QUERY_CONCEPT", ("query",), {"status": "FOUND", "concept": {}}, None)
     assert part.status == "UNKNOWN" and part.sources == () and part.basis == ()
+
+
+# ------------------------------------------------------------------ keyword mode (ADR 0035/0036 P9-3, P9-22)
+#
+# `query --keyword` resolves no concept - it reports which stored text matched the term,
+# re-read from knowledge.db and scope-checked. Its answer carries the match in `keyword`,
+# not `concept`; before this fix `from_query` read only `concept` and reported every
+# keyword-mode result "Unknown.", even a FOUND one with real evidence.
+
+KEYWORD_FOUND = {
+    "status": "FOUND", "message": "1 knowledge object(s) and 1 concept name(s) match 'flip-flop'.",
+    "concept": None,
+    "keyword": {
+        "term": "flip-flop",
+        "knowledge": [{
+            "knowledge": {"id": "K-00000001", "knowledge_type": "DEFINITION",
+                          "statement": "A flip-flop is a bistable circuit that stores one bit of data."},
+            "evidence": [_evidence("DOC-00000001", 2, "A flip-flop is a bistable circuit that stores one bit of data.")],
+        }],
+        "concepts": [{
+            "concept": {"id": "CPT-00000001", "canonical_name": "Flip-flop"},
+            "occurrences": [_evidence("DOC-00000001", 2, "Flip-flop")],
+        }],
+    },
+}
+
+
+def test_a_keyword_hit_is_answered_with_its_basis_and_sources_not_unknown():
+    part = answers.from_query(1, "flip-flop", "KEYWORD_SEARCH", ("query", "--keyword", "flip-flop"),
+                              KEYWORD_FOUND, None)
+    assert part.status == "ANSWERED" and part.path == "KNOWLEDGE"
+    assert part.answer == "Definition: A flip-flop is a bistable circuit that stores one bit of data.\nConcept: Flip-flop"
+    assert part.basis == ("K-00000001", "CPT-00000001")
+    assert part.sources == (
+        'DOC-00000001 p.2: "A flip-flop is a bistable circuit that stores one bit of data."',
+        'DOC-00000001 p.2: "Flip-flop"',
+    )
+
+
+def test_a_keyword_search_with_no_matches_is_unknown_not_a_crash():
+    empty = {**KEYWORD_FOUND, "keyword": {"term": "x", "knowledge": [], "concepts": []}}
+    part = answers.from_query(1, "x", "KEYWORD_SEARCH", ("query", "--keyword", "x"), empty, None)
+    assert part.status == "UNKNOWN" and part.sources == () and part.basis == ()
+
+
+def test_concept_mode_is_unaffected_by_the_keyword_field_being_present_and_empty():
+    """Every query answer carries a `keyword` key; concept mode's own answer must still
+    read only from `concept`, exactly as before."""
+    part = answers.from_query(1, "resistance", "QUERY_CONCEPT", ("query", "--name", "resistance"),
+                              {**FOUND, "keyword": None}, "definition")
+    assert part.answer == "Definition: Resistance is defined as the opposition to current."

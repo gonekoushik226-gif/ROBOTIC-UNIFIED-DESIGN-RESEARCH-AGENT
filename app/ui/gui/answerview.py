@@ -18,6 +18,9 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from app.ui.gui import mathrender
+from app.ui.gui import worked as worked_solution
+
 #: Database identifiers: K-00000001, CPT-00000001, DOC-00000001, REL-..., and so on.
 IDENTIFIER = re.compile(r"\b[A-Z]{1,5}-\d{8}\b")
 _BRACKETED_ID = re.compile(r"\s*\((?:[A-Z]{1,5}-\d{8})(?:,\s*[A-Z]{1,5}-\d{8})*\)")
@@ -25,8 +28,8 @@ _BRACKETED_ID = re.compile(r"\s*\((?:[A-Z]{1,5}-\d{8})(?:,\s*[A-Z]{1,5}-\d{8})*\
 MAX_TRACED = 3
 
 _NEXT_STEPS = {
-    "extract FILE.pdf": "Import a document that covers it (Import page).",
-    "research": "Authorize an Internet search for one website (Command page: research \"QUESTION\" --site URL).",
+    "extract FILE.pdf": "Add a document that covers it (the Add document page).",
+    "research": "Look it up on one website you choose (Command page: research \"QUESTION\" --site URL).",
 }
 
 
@@ -67,6 +70,27 @@ class AnswerPart:
     #: uncertainty is part of what the answer says, not provenance detail).
     uncertain: tuple[str, ...] = ()
     intent: str = ""
+    #: A calculation's worked solution (result, givens, steps) when the command returned
+    #: one, for the window to typeset; the plain `lines` and `extras` stay what they were.
+    worked: worked_solution.Worked | None = None
+    #: Stored equations that disagree on the quantity asked, for the window to typeset side by side.
+    conflict: worked_solution.Conflict | None = None
+
+    def shown_extras(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """The extras the window prints. A worked solution already shows the steps, and what
+        was asked from what was given (the result and the givens), so those lines are left out
+        of the extras - they remain in `extras`, and in the copied text."""
+        if self.worked is None:
+            return self.extras
+        shown = []
+        for title, values in self.extras:
+            if title == "Steps":
+                continue
+            if title == "Reasoning":
+                values = tuple(value for value in values if not value.startswith("Asked for "))
+            if values:
+                shown.append((title, values))
+        return tuple(shown)
 
     def statements(self) -> tuple[str, ...]:
         """The retrieved statements themselves ("Definition: X is ..." -> "X is ...")."""
@@ -118,7 +142,8 @@ def _part(raw: dict) -> AnswerPart:
         extras.append(("Next steps", steps))
     uncertain = tuple(clean(value) for value in raw.get("uncertain") or () if clean(value))
     return AnswerPart(int(raw.get("number", 0)), details.status, lines, tuple(extras), bool(details.conflicts),
-                      details, uncertain, str(raw.get("intent", "")))
+                      details, uncertain, str(raw.get("intent", "")), worked_solution.from_part(raw),
+                      worked_solution.conflict_from_part(raw))
 
 
 def parse_answer(stdout: str) -> AnswerDocument | None:
@@ -135,6 +160,25 @@ def parse_answer(stdout: str) -> AnswerDocument | None:
     if not request:
         request = (data.get("interpretation") or {}).get("text", "")
     return AnswerDocument(str(request or ""), tuple(_part(part) for part in data["parts"] if isinstance(part, dict)))
+
+
+_STORED_EQUATION = re.compile(r'^(?P<head>[A-Z]{1,5}-\d{8}: the stored equation )"(?P<formula>.+)"$')
+_QUOTATION = re.compile(r'^[A-Z]{1,5}-\d{8}(?: p\.\d+)?: "(?P<quote>.+)"$')
+
+
+def stored_equation(line: str) -> tuple[str, str] | None:
+    """(the line up to the equation, the equation) for `K-00000005: the stored equation "..."`."""
+    match = _STORED_EQUATION.match(line)
+    return (match.group("head"), match.group("formula")) if match else None
+
+
+def quoted_formula(line: str) -> str | None:
+    """The formula in a document quotation (`DOC-00000001 p.1: "f = \\frac{1}{T}"`) when it is
+    written in LaTeX, else None: plain text is already readable as it stands."""
+    match = _QUOTATION.match(line)
+    if match is None or mathrender.segments(match.group("quote")) is None:
+        return None
+    return match.group("quote")
 
 
 def detail_lines(details: SourceDetails, display_command) -> list[tuple[str, str]]:

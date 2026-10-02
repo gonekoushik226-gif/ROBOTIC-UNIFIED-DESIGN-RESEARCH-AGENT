@@ -20,7 +20,7 @@ from app.manuals.detectors import step_input
 NAME_INPUTS = ("name", "project name")
 
 NOT_EXECUTED_NOTE = ("Nothing was executed: its menu steps need UI inspection, which RUDRA does not have yet "
-                     "(ADR 0049 P17-1).")
+                     ".")
 
 
 @dataclass(frozen=True, slots=True)

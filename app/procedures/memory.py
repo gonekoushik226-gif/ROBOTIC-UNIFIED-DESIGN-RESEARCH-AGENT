@@ -22,7 +22,7 @@ from app.storage import CODE_SCHEMA_VERSION, queries, schema_version
 from app.storage.repository import Repository
 
 #: Section 113: repeated execution is not proof of correctness under every environment.
-ENVIRONMENT_NOTE = "verification holds for the recorded environments only (section 113)"
+ENVIRONMENT_NOTE = "verification holds for the recorded environments only"
 
 
 class LookupStatus(StrEnum):
@@ -137,7 +137,7 @@ class ProcedureMemory:
             return Lookup(LookupStatus.NOT_FOUND, identifier, f"No stored procedure has the identifier {identifier}.")
         if lifecycle_excluded(row.lifecycle_status):
             return Lookup(LookupStatus.EXCLUDED, identifier,
-                          f"{identifier} is {row.lifecycle_status.value}: it is not shown or run (P9-23).")
+                          f"{identifier} is {row.lifecycle_status.value}: it is not shown or run.")
         return Lookup(LookupStatus.FOUND, identifier, "", self._stored(row))
 
     def _stored(self, row: Procedure) -> StoredProcedure:
@@ -151,7 +151,7 @@ class ProcedureMemory:
         if source.status is not ProvenanceStatus.AVAILABLE:
             reason = f"its source is not available in scope {self.scope.value}: {source.message}"
         elif row.documentation_status is ProcedureDocumentationStatus.INFERRED_PROCEDURE:
-            reason = "it is an inferred procedure; only documented procedures are executed (P16-1)"
+            reason = "it is an inferred procedure; only documented procedures are executed"
         labels = (row.documentation_status.value,)
         if row.successful_executions >= 1 and row.documentation_status is not ProcedureDocumentationStatus.VERIFIED_PROCEDURE:
             labels += (ProcedureDocumentationStatus.VERIFIED_PROCEDURE.value,)

@@ -314,7 +314,7 @@ def test_197_through_the_cli_one_process_per_step(tmp_path):
         pdf.write_bytes(make_pdf(pages))
         result = _cli(project, "extract", str(pdf))
         assert result.returncode == 0, result.stderr
-        assert "extractor v6" in result.stdout and "not indexed (Phase 9)" in result.stdout
+        assert "extractor v6" in result.stdout and "keyword index is brought up to date by itself" in result.stdout
         if name in "BC":
             assert "EXACT_DUPLICATE 1" in result.stdout
         if name == "G":

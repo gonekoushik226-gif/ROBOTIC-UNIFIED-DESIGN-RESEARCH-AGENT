@@ -12,6 +12,23 @@ directory; the build copies them from the exact packages it bundles
 | pypdf | 6.19.0 | BSD 3-Clause | `licenses/PYPDF-LICENSE.txt` |
 | PyInstaller bootloader | 6.22.3 | GPL-2.0-or-later **with the PyInstaller Bootloader Exception**, which permits distributing the generated executables under any terms | `licenses/PYINSTALLER-COPYING.txt` |
 
+## Speech recognition (the `speech` folder)
+
+RUDRA recognizes speech offline with the three open-source pieces below, installed unmodified
+in the `speech` folder of the program directory. They are pinned by exact URL and SHA-256 in
+`windows/fetch_speech.py`, which verifies every file; the license texts are installed in the
+`licenses` folder. Nothing here connects to the Internet when RUDRA runs.
+
+| Component | Version | License | Full text |
+|---|---|---|---|
+| whisper.cpp (`whisper-cli.exe`, `whisper.dll`, `ggml*.dll`) - the program that runs the model | v1.9.4, release build b5130 (commit 927cfce34f31707e17f2bff35c349632fb9e2c3a), from github.com/ggml-org/whisper.cpp | MIT, Copyright (c) 2023-2026 The ggml authors | `licenses/WHISPER-CPP-LICENSE.txt` |
+| OpenAI Whisper small.en model weights, in whisper.cpp's ggml format, 5-bit quantized (`ggml-small.en-q5_1.bin`, 190,098,681 bytes) | the file published at huggingface.co/ggerganov/whisper.cpp, revision 5359861c739e955e79d9a303bcbc70fb988958b1 | MIT (the Whisper repository states: "Whisper's code and model weights are released under the MIT License"), Copyright (c) 2022 OpenAI | `licenses/OPENAI-WHISPER-LICENSE.txt` |
+| Silero VAD voice-activity model v5.1.2 in ggml format (`ggml-silero-v5.1.2.bin`, 885,098 bytes) | the file published at huggingface.co/ggml-org/whisper-vad, revision 9ffd54a1e1ee413ddf265af9913beaf518d1639b | MIT, Copyright (c) 2020-present Silero Team | `licenses/SILERO-VAD-LICENSE.txt` |
+
+The licenses are as published by those projects at the versions named, on 2026-10-01; no
+other terms were found attached to the files. Microphone audio is processed in memory and is
+never stored.
+
 ## Components distributed as part of the Python runtime
 
 The Python for Windows runtime that PyInstaller bundles contains the following
@@ -49,8 +66,8 @@ with Times New Roman and Segoe UI Symbol as fallbacks). No font is bundled.
 ## Windows components used, not distributed
 
 OCR (`Windows.Media.Ocr`), PDF page rendering (`Windows.Data.Pdf`), image decoding
-(`Windows.Graphics.Imaging`), the Windows Credential Manager, speech recognition and
-Windows PowerShell are parts of Windows. RUDRA calls them on the user's own computer; it
+(`Windows.Graphics.Imaging`), the microphone interface (`winmm`), speech output
+(`System.Speech`), the Windows Credential Manager and Windows PowerShell are parts of Windows. RUDRA calls them on the user's own computer; it
 does not bundle or redistribute them.
 
 ## Optional external services

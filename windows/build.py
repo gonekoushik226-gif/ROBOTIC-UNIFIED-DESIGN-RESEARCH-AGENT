@@ -16,9 +16,12 @@ Steps
   1. Refuse to build over a dist/RUDRA that holds RUDRA project data (config/, data/
      or logs/): PyInstaller deletes the folder it rebuilds, and that data is the user's.
   2. Run the test suite (skip with --skip-tests).
-  3. PyInstaller, from windows/RUDRA.spec (the build's configuration).
+  3. PyInstaller, from windows/RUDRA.spec (the build's configuration), then the offline
+     speech recogniser (speech/, put there and verified by windows/fetch_speech.py) copied
+     beside the programs as dist/RUDRA/speech.
   4. Self-test both programs in temporary project folders, then delete them. RUDRA-CLI.exe:
-     start, version, db, calculate, extract, lookup, provenance. RUDRA.exe: the window's
+     start, version, db, calculate, extract, lookup, provenance, and speech - a sentence is
+     spoken into a WAV file and read back by the packaged recogniser. RUDRA.exe: the window's
      own self-test, which drives its forms through the same workflows. The live project
      and its knowledge.db are never touched.
   5. Check the package: no database, document, log, backup, cache or project folder, and
@@ -47,7 +50,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.version import PHASE, VERSION  # noqa: E402
+from app.version import EDITION, VERSION  # noqa: E402
+from windows import fetch_speech  # noqa: E402
 
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
@@ -100,6 +104,21 @@ def pyinstaller() -> None:
          "--workpath", BUILD / "pyinstaller", SPEC], cwd=ROOT)
 
 
+def bundle_speech() -> None:
+    """The speech recogniser, verified against its pinned hashes, copied to dist/RUDRA/speech."""
+    problems = fetch_speech.check()
+    if problems:
+        sys.exit("The speech recogniser is not installed in speech/: " + "; ".join(problems[:3])
+                 + "\nRun: python windows\\fetch_speech.py")
+    destination = TARGET / "speech"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(fetch_speech.SPEECH, destination)
+    problems = fetch_speech.check(destination)
+    check("speech", not problems, "; ".join(problems) or
+          f"{sum(1 for p in destination.rglob('*') if p.is_file())} files, every one matching its pinned SHA-256")
+
+
 def check(label: str, ok: bool, detail: object) -> None:
     print(f"  {label:<20} {'ok' if ok else 'FAILED'}  {detail}")
     if not ok:
@@ -136,8 +155,8 @@ def self_test_cli(exe: Path) -> None:
         check("start", started["started"] and Path(started["project_root"]) == root.resolve(),
               f"{len(started['directories_created'])} directories created in the scratch project")
         version = json.loads(rudra("version", "--json"))
-        check("version", version["phase"] == PHASE and version["version"] == VERSION,
-              f"{version['version']}, {version['phase']}, Python {version['python']}")
+        check("version", version["edition"] == EDITION and version["version"] == VERSION,
+              f"{version['version']}, {version['edition']}, Python {version['python']}")
         database = json.loads(rudra("db", "--json"))
         check("db", database["created"] and database["integrity"] == "ok",
               f"created, schema version {database['schema_version']}, integrity {database['integrity']}")
@@ -155,6 +174,11 @@ def self_test_cli(exe: Path) -> None:
         provenance = json.loads(rudra("provenance", definition, "--json"))
         check("provenance", provenance["status"] == "AVAILABLE" and provenance["verification"] == "VERIFIED",
               f"{definition} {provenance['status']}, {provenance['verification']}")
+        spoken = Path(scratch) / "request.wav"
+        rudra("voice", "--say", "Open Calculator.", "--audio", str(spoken))
+        heard = json.loads(rudra("voice", "--audio", str(spoken), "--dry-run", "--json"))["speech"]
+        check("speech", heard["text"].casefold().strip(" .") == "open calculator" and "Whisper" in heard["recognizer"],
+              f"{heard['text']!r}, confidence {heard['confidence']}")
 
 
 def self_test_gui(exe: Path) -> None:
@@ -203,6 +227,8 @@ def verify_package(target: Path = TARGET) -> None:
         if path.is_file() and path.name.lower().endswith(FORBIDDEN_SUFFIXES):
             problems.append(f"file {relative}")
     for path in files:
+        if "speech" in path.relative_to(target).parts[:1] and path.suffix == ".bin":
+            continue  # a 190 MB neural-network model: no text of ours to leak, and too large to read whole
         found = _contains_marker(path.read_bytes(), markers)
         if found is not None:
             problems.append(f"{path.relative_to(target)} contains a build-machine path")
@@ -243,6 +269,8 @@ def collect_licenses() -> Path:
         if found is None:
             sys.exit(f"The license file of {distribution} was not found; nothing was built.")
         sources[name] = Path(found.locate())
+    for name in fetch_speech.LICENSE_FILES:
+        sources[name] = fetch_speech.SPEECH / "licenses" / name
     for name, source in sources.items():
         if not source.is_file():
             sys.exit(f"The license file {source} does not exist; nothing was built.")
@@ -303,6 +331,7 @@ def main() -> None:
 
     step("Building dist/RUDRA (PyInstaller, windows/RUDRA.spec)")
     pyinstaller()
+    bundle_speech()
 
     step("Self-test: RUDRA-CLI.exe, the command line")
     self_test_cli(CLI)

@@ -13,11 +13,11 @@ APP_NAME: Final = "RUDRA"
 APP_SHORT_NAME: Final = "RUDRA"
 APP_FULL_NAME: Final = "ROBOTIC UNIFIED DESIGN RESEARCH AGENT"
 
-#: Application version. 0.x means the architecture is still being established.
-VERSION: Final = "0.1.0"
+#: Application version. 1.0.0 is RUDRA's first public release.
+VERSION: Final = "1.0.0"
 
-#: The development phase this build implements (Part 5 section 182).
-PHASE: Final = "Phase 23 - Final Acceptance"
+#: Which edition of RUDRA this is, shown beside the version.
+EDITION: Final = "for Windows"
 
 #: Version of the configuration file format (Part 4 section 150).
 #: Increment only together with a migration path for existing config files.

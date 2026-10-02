@@ -90,7 +90,7 @@ APPLICATIONS: tuple[Application, ...] = (
         (LaunchMethod(LaunchKind.APP_PATH, "chrome.exe"),),
         Detection(("chrome.exe",), r"Google Chrome$", "New Tab - Google Chrome"),
         _WINDOW,
-        ("RUDRA opens the browser only; it does not browse, search or sign in (section 108).",),
+        ("RUDRA opens the browser only; it does not browse, search or sign in.",),
     ),
     Application(
         "Word", "DESKTOP", ("word", "microsoft word", "ms word", "winword"),
@@ -123,7 +123,7 @@ APPLICATIONS: tuple[Application, ...] = (
         Detection(("chrome.exe",), r"MATLAB", "MATLAB"),
         _WINDOW,
         ("MATLAB here is a Chrome web app, not a desktop install: it needs the Internet and the "
-         "user's own sign-in, which RUDRA never handles (P6 section 3).",),
+         "user's own sign-in, which RUDRA never handles.",),
     ),
 )
 

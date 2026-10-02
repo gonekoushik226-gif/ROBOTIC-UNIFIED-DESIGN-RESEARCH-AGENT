@@ -32,7 +32,7 @@ from app.applications import Application
 from app.core.errors import InvalidInputError
 from app.core.logging_setup import get_logger
 
-DRY_RUN_NOTE = "DRY RUN - no changes have been made: the plan ran on a simulated computer (P6 section 28)."
+DRY_RUN_NOTE = "DRY RUN - no changes have been made: the plan ran on a simulated computer."
 
 _audit = get_logger("app.actions")
 # Without configured logging (a library call, a test) the audit line goes nowhere, rather

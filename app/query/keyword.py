@@ -41,12 +41,11 @@ from app.storage import keyword_index as store
 
 KEYWORD_NOTE = (
     "Keyword mode matches stored text through the derived index; every hit is re-read "
-    "from knowledge.db and scope-checked. A keyword hit is not a link to any concept "
-    "(D1, ADR 0035 P9-3): no concept is resolved, widened or merged, and no relevance "
-    "score is used (ADR 0036 P9-22)."
+    "from knowledge.db and scope-checked. A keyword hit is not a link to any concept: "
+    "no concept is resolved, widened or merged, and no relevance score is used."
 )
 TOKENIZER_NOTE = (
-    "Tokenizer limits (PHASE_9.md section 13.3): diacritics are kept, so 'cafe' does not "
+    "Tokenizer limits: diacritics are kept, so 'cafe' does not "
     "match 'café'; there is no stemming, so a plural matches only through a prefix; "
     "'VGS' does not match 'V_GS' and 'uF' does not match 'μF'; symbols such as °, ± "
     "and = are not searchable."

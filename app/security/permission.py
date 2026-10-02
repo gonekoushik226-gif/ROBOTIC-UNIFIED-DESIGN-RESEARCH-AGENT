@@ -50,7 +50,7 @@ def decide(plan: ExecutionPlan, *, confirmed: bool) -> tuple[PermissionDecision,
         if not plan.live:
             decision, reason = Decision.NOT_REQUIRED, "a dry run on the simulated computer changes nothing"
         elif step.risk_level is RiskLevel.LOW:
-            decision, reason = Decision.PERMITTED, "LOW risk, and part of the user's own request (section 106)"
+            decision, reason = Decision.PERMITTED, "LOW risk, and part of the user's own request"
         elif step.risk_level is RiskLevel.MEDIUM and confirmed:
             decision, reason = Decision.PERMITTED, "MEDIUM risk, and the user confirmed it (--confirm)"
         elif step.risk_level is RiskLevel.MEDIUM:
@@ -58,7 +58,7 @@ def decide(plan: ExecutionPlan, *, confirmed: bool) -> tuple[PermissionDecision,
             reason = (f"MEDIUM risk: {step.action} would be performed ({step.expected}); it needs the "
                       "user's explicit confirmation - run the request again with --confirm")
         else:
-            decision, reason = Decision.REFUSED, "HIGH risk: no HIGH-risk action is enabled (section 107)"
+            decision, reason = Decision.REFUSED, "HIGH risk: no HIGH-risk action is enabled"
         decisions.append(PermissionDecision(step.number, step.action, step.risk_level, decision, reason))
     return tuple(decisions)
 
@@ -79,14 +79,14 @@ def decide_documented(plan: ExecutionPlan, *, confirmed: bool) -> tuple[Permissi
         elif step.risk_level is not RiskLevel.LOW:
             decision = Decision.REFUSED
             reason = (f"{step.risk_level.value} risk: {step.action} is a documented step, and a documented "
-                      f"procedure runs only LOW-risk steps live (ADR 0048 P16-6)")
+                      f"procedure runs only LOW-risk steps live")
         elif not confirmed:
             decision = Decision.REFUSED
-            reason = ("the step comes from a document (section 109): a documented procedure runs live only "
+            reason = ("the step comes from a document: a documented procedure runs live only "
                       "with --confirm, after you have reviewed its steps")
         else:
             decision = Decision.PERMITTED
-            reason = "LOW risk, from the documented procedure the user named and confirmed (section 109)"
+            reason = "LOW risk, from the documented procedure the user named and confirmed"
         decisions.append(PermissionDecision(step.number, step.action, step.risk_level, decision, reason))
     return tuple(decisions)
 

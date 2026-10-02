@@ -1,6 +1,6 @@
 """Install, use, upgrade and uninstall RUDRA from its installer, as a user would, in a scratch folder.
 
-    python windows\\test_installer.py dist\\installer\\RUDRA-Setup-0.1.0-win64.exe
+    python windows\\test_installer.py dist\\installer\\RUDRA-Setup-1.0.0-win64.exe
     python windows\\test_installer.py SETUP.exe --upgrade-to NEWER-SETUP.exe
 
 Everything happens under one temporary folder, which stands in for a clean user profile:
@@ -22,7 +22,9 @@ PYTHON* variables, so nothing can come from a Python installation. Checks:
   1. the silent per-user install succeeds and installs the programs, LICENSE and notices,
      and nothing private (no database, document, log or data folder);
   2. RUDRA-CLI.exe starts and creates its data folder in %LOCALAPPDATA%\\RUDRA;
-  3. a PDF is imported and a question answered;
+  3. a PDF is imported, the knowledge inventory lists what was stored, a question is
+     answered, RUDRA chooses the stored equations for a two-step calculation, and --help
+     prints on a console that cannot show every character;
   4. RUDRA.exe's own self-test passes, with the network cut off (sources hidden until
      View Sources, formulas typeset, export and restore, the update check failing quietly);
   5. installing again (or the newer installer given with --upgrade-to) keeps the user data;
@@ -190,7 +192,10 @@ def main() -> None:
         run_setup(args.setup, program, base / "install.log")
         installed = {p.relative_to(program).as_posix() for p in program.rglob("*") if p.is_file()}
         for required in ("RUDRA.exe", "RUDRA-CLI.exe", "LICENSE.txt", "THIRD_PARTY_NOTICES.md",
-                         "licenses/PYTHON-LICENSE.txt", "licenses/PYPDF-LICENSE.txt", "unins000.exe"):
+                         "licenses/PYTHON-LICENSE.txt", "licenses/PYPDF-LICENSE.txt", "licenses/WHISPER-CPP-LICENSE.txt",
+                         "licenses/OPENAI-WHISPER-LICENSE.txt", "licenses/SILERO-VAD-LICENSE.txt",
+                         "speech/manifest.json", "speech/whisper-cli.exe", "speech/whisper.dll",
+                         "speech/models/ggml-small.en-q5_1.bin", "speech/models/ggml-silero-v5.1.2.bin", "unins000.exe"):
             check(f"installed {required}", required in installed)
         private = sorted(name for name in installed if name.lower().endswith(FORBIDDEN))
         check("nothing private installed", not private, private[:5] or f"{len(installed)} files")
@@ -215,6 +220,34 @@ def main() -> None:
         answer = json.loads(out[out.index("{"):out.rindex("}") + 1])
         check("question answered", code == 0 and answer["parts"][0]["status"] == "ANSWERED",
               answer["parts"][0]["answer"][:70])
+
+        code, out = rudra("inventory", "--json")
+        listing = json.loads(out[out.index("{"):out.rindex("}") + 1]) if code == 0 else {}
+        totals = listing.get("totals", {})
+        check("inventory", code == 0 and totals.get("documents") == 1 and totals.get("counts", {}).get("EQUATION") == 2
+              and listing.get("calculation", {}).get("usable") == 2, totals.get("counts"))
+        code, out = rudra("ask", "Calculate I when V = 12 V, R1 = 10 ohms and R2 = 20 ohms", "--json", "--dry-run")
+        part = json.loads(out[out.index("{"):out.rindex("}") + 1])["parts"][0]
+        steps = [line for line in part["calculation"] if line.startswith("Step")]
+        check("two-step calculation", code == 0 and part["status"] == "ANSWERED" and part["answer"] == "I = 0.4 A"
+              and len(steps) == 2, part["answer"])
+        code, out = rudra("ask", "Calculate P when V = 10 V", "--json", "--dry-run")
+        part = json.loads(out[out.index("{"):out.rindex("}") + 1])["parts"][0]
+        check("insufficient values said so", part["status"] == "CANNOT_DETERMINE" and bool(part["missing"]),
+              part["answer"][:70])
+        code, out = rudra("--help")
+        check("help prints", code == 0 and "usage: RUDRA-CLI.exe" in out and "python -m app" not in out, f"exit {code}")
+
+        # Speech: the installed recogniser, offline, reads a sentence spoken into a WAV file.
+        spoken = base / "request.wav"
+        code, out = rudra("voice", "--say", "Open Calculator.", "--audio", str(spoken))
+        check("speech output", code == 0 and spoken.is_file(), f"exit {code}")
+        done = subprocess.run([str(cli), "voice", "--audio", str(spoken), "--dry-run", "--json", "--project-root",
+                               str(data_home)], capture_output=True, text=True, env=clean_environment(local, offline=True),
+                              cwd=str(base), encoding="utf-8", errors="replace", timeout=300)
+        heard = json.loads(done.stdout[done.stdout.index("{"):done.stdout.rindex("}") + 1])["speech"]
+        check("speech recognition (offline)", heard["text"].casefold().strip(" .") == "open calculator"
+              and "Whisper" in heard["recognizer"], f"{heard['text']!r}, confidence {heard['confidence']}")
 
         print("=== 4. The window's self-test, offline", flush=True)
         report = base / "gui-report.json"

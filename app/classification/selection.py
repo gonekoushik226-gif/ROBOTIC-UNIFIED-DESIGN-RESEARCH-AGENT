@@ -49,16 +49,15 @@ def select_run(
     if run_id and document_id:
         raise _refusal(
             "Both a run and a document were given; nothing was classified.",
-            "Phase 6 classifies exactly one explicitly named extraction run. Two "
-            "selections are not combined or reconciled (ADR 0029).",
+            "Classification works on exactly one explicitly named extraction run. Two "
+            "selections are not combined or reconciled.",
             available=(f"--run {run_id}", f"document {document_id}"),
             next_options=(_NAME_A_RUN, _NAME_A_DOCUMENT),
         )
     if not run_id and not document_id:
         raise _refusal(
             "No extraction run was named; nothing was classified.",
-            "Phase 6 never chooses a run by itself - there is no current-run policy "
-            "(ADR 0029).",
+            "Classification never chooses a run by itself - there is no current-run policy.",
             missing=("an extraction run identifier",),
             next_options=(_NAME_A_RUN, _NAME_A_DOCUMENT),
         )
@@ -120,7 +119,7 @@ def _only_run(repository: Repository, document_id: str) -> ExtractionRun:
             "That document has more than one extraction run and none was named; "
             "nothing was classified.",
             f"Document {document.id} has {len(runs)} runs. Choosing one would change "
-            "the result, so Phase 6 does not guess (Part 3 section 97, ADR 0029).",
+            "the result, so it does not guess.",
             available=tuple(
                 f"{run.id}: run {run.run_number}, trigger {run.trigger}, "
                 f"extractor v{run.extractor_version}, status {run.status}"

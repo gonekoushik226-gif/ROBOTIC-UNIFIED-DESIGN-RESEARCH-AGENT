@@ -203,7 +203,7 @@ def test_section_251_the_final_acceptance_scenario(library):
     assert part["status"] == "CANNOT_DETERMINE" and part["missing"] == ["R2"]
     assert part["why"] == ["R2 is required by I = V / (R1 + R2)"]
     assert part["available"] == ["V = 10 V", "R1 = 5 Ω"]
-    assert [s.split(" ")[0] for s in part["next_steps"]] == ["Provide", "Use", "Authorize", "Cancel."]
+    assert [s.split(" ")[0] for s in part["next_steps"]] == ["Try", "Add", "Look"]
     # "Open MATLAB." - OPEN_APPLICATION(MATLAB), risk-checked, executed and verified (dry run).
     code, (part,) = _ask(root, "Open MATLAB.", "--dry-run")
     assert part["status"] == "DONE" and part["actions"][0].startswith("OPEN_APPLICATION: VERIFIED")

@@ -241,14 +241,14 @@ def read_admission(
         raise refuse(
             f"The admitted item {identifier!r} is not a stored equation.",
             f"It is a {knowledge.knowledge_type.value} knowledge object; only a knowledge object "
-            "of type EQUATION can be admitted to a calculation (ADR 0042 P11-19).",
+            "of type EQUATION can be admitted to a calculation.",
         )
     rows = queries.equations_of_knowledge(repository.connection, identifier)
     if len(rows) != 1:
         raise refuse(
             f"The admitted item {identifier!r} has {len(rows)} stored equation rows.",
             "An admitted equation must have exactly one stored equation row; RUDRA will not "
-            "choose between several, and cannot use none (ADR 0042 P11-19).",
+            "choose between several, and cannot use none.",
         )
     (equation,) = rows
     reader = _Reader(repository, scope)

@@ -5,7 +5,7 @@
 
 Each step is one `python -m app` process in a temporary project root; the live database is
 never opened. The request is spoken by the Windows voice into a WAV file in pytest's
-temporary folder (`voice --say`), and recognized by Windows' own engine. The pipeline runs
+temporary folder (`voice --say`), and recognized offline by Whisper. The pipeline runs
 on the simulated computer (`--dry-run`): the suite never acts on the live desktop (ADR 0047
 P15-11); the live path is `do`'s, demonstrated live in Phase 15. The microphone is never
 opened. Without the Windows speech engine the module is skipped, and says so.
@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from app.ui.cli import main as cli_main
-from app.voice import SpeechUnavailable, synthesize
+from app.voice import SpeechUnavailable, engine, synthesize
 from tests.conftest import PROJECT_ROOT
 
 
@@ -48,8 +48,9 @@ def speech(tmp_path_factory) -> Path:
     folder = tmp_path_factory.mktemp("speech")
     try:
         synthesize("Open Calculator.", folder / "probe.wav")
+        engine.find_components()
     except SpeechUnavailable as missing:
-        pytest.skip(f"the Windows speech engine is not available: {missing.reason}")
+        pytest.skip(f"speech is not available (Windows' voice, or the recogniser in the speech folder):{missing.reason}")
     return folder
 
 
@@ -68,7 +69,7 @@ def test_the_command_set_gains_exactly_voice():
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do",
               "procedure", "manual", "research", "diagram", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 20's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"ask", "source"} == before | {"voice"}
+    assert set(cli_main._COMMANDS) - {"ask", "source", "solve", "inventory"} == before | {"voice"}
 
 
 def test_section_221_spoken_open_calculator_equals_the_typed_command(speech, tmp_path):
@@ -80,7 +81,8 @@ def test_section_221_spoken_open_calculator_equals_the_typed_command(speech, tmp
     code, spoken = _json(root, "voice", "--audio", str(audio), "--dry-run")
     assert code == 0
     transcript = spoken["speech"]
-    assert transcript["text"].casefold() == "open calculator" and transcript["grammar"] == "commands"
+    assert transcript["text"].casefold().strip(" .") == "open calculator" and transcript["grammar"] == "dictation"
+    assert "Whisper" in transcript["recognizer"] and transcript["confidence"] is not None
     report = spoken["report"]
     # Speech -> text -> intent -> action -> verification.
     assert [s["name"] for s in report["stages"]] == ["INTERPRET", "PLAN", "VALIDATE", "PERMISSION", "EXECUTE",
@@ -99,7 +101,7 @@ def test_voice_does_not_bypass_authorization(speech, tmp_path):
     audio = speech / "close-notepad.wav"
     assert cli(root, "voice", "--say", "Close Notepad.", "--audio", str(audio))[0] == 0
     code, spoken = _json(root, "voice", "--audio", str(audio), "--dry-run")
-    assert spoken["speech"]["text"].casefold() == "close notepad"
+    assert spoken["speech"]["text"].casefold().strip(" .") == "close notepad"
     # On the simulated computer a dry run needs no permission; the step is MEDIUM risk, and
     # the permission engine's decision for a live run is the typed --confirm's alone.
     (decision,) = spoken["report"]["permissions"]

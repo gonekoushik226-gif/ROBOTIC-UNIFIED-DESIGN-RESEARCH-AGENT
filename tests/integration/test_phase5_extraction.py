@@ -541,7 +541,7 @@ def test_cli_extracts_once_refuses_a_silent_repeat_and_re_extracts_on_request(tm
     first = _cli(project, "extract", str(pdf))
     assert first.returncode == 0, first.stderr
     assert "run 1" in first.stdout and "FIRST_EXTRACTION" in first.stdout
-    assert "never writes PROCESSED" in first.stdout
+    assert "extraction only ever lowers this" in first.stdout
 
     again = _cli(project, "extract", str(pdf))
     assert again.returncode == 0, again.stderr

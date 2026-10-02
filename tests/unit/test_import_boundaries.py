@@ -70,6 +70,8 @@ ALLOWED: dict[str, set[str]] = {
         "app.voice",
         # The desktop window's update notice, and its optional AI assistance.
         "app.updates", "app.providers",
+        # The `solve` command: choosing and chaining the stored equations of a calculation question.
+        "app.solving", "app.inventory",
     },
     # The update notice: standard library and the version constants only.
     "app.updates": {"app.version"},
@@ -170,6 +172,14 @@ ALLOWED: dict[str, set[str]] = {
     # registry; the transcript is handed to the pipeline by the interface, as typed text is.
     "app.voice": {"app.version", "app.models", "app.core", "app.applications"},
     "app.providers": {"app.version", "app.models", "app.core"},
+    # Choosing the stored equations a calculation needs (after the interactive pass of the release):
+    # reads them through app.storage, calculates with app.calculation's exact engine and checks the
+    # result with app.verification's independent evaluator. It imports no query, reasoning or
+    # extraction code - it reads what was stored, as the calculation engine does.
+    "app.solving": {"app.version", "app.models", "app.core", "app.storage", "app.calculation", "app.verification"},
+    # What RUDRA knows, as a person reads it: reads stored knowledge through app.storage and asks
+    # app.solving which stored equations a calculation can use. Nothing writes through it.
+    "app.inventory": {"app.version", "app.models", "app.core", "app.storage", "app.calculation", "app.solving"},
 }
 
 #: Pairs that must never be connected, whatever else is allowed.

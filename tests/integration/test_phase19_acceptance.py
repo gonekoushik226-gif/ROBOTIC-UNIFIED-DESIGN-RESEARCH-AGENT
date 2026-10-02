@@ -65,7 +65,7 @@ def test_the_command_set_gains_exactly_diagram():
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do",
               "procedure", "manual", "research", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 19's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"voice", "ask", "source"} == before | {"diagram"}
+    assert set(cli_main._COMMANDS) - {"voice", "ask", "source", "solve", "inventory"} == before | {"diagram"}
 
 
 def test_section_219(root, tmp_path):

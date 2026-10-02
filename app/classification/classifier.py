@@ -153,7 +153,7 @@ class Classifier:
         if run.status in REFUSED_STATUSES:
             raise InvalidInputError.of(
                 f"Extraction run {run.id} cannot be classified; nothing was classified.",
-                f"Run {run.id} is {run.status} and has no committed knowledge (ADR 0029).",
+                f"Run {run.id} is {run.status} and has no committed knowledge.",
                 stage="classification.classify",
                 data_changed=False,
                 retry_safe=True,
@@ -162,7 +162,7 @@ class Classifier:
         if self._connection.in_transaction:
             raise InvalidInputError.of(
                 "Classification was not started: the connection has uncommitted work.",
-                "A classification is exactly one transaction (ADR 0027). Starting it "
+                "A classification is exactly one transaction. Starting it "
                 "on top of pending writes would commit or roll back work that is not "
                 "its own.",
                 stage="classification.classify",

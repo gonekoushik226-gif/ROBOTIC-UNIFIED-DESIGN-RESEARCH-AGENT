@@ -114,7 +114,7 @@ def test_phase_9_adds_exactly_the_query_and_index_commands():
     # 2026-09-25, PHASE_10.md section 13.2), and Phase 11 adds `calculate` (ADR 0043
     # P11-29, P11-30 edit 4; PHASE_11.md section 16), and Phase 12 adds `provenance` (ADR 0044
     # P12-15, P12-16); Phase 9's own additions are unchanged.
-    assert set(cli_main._COMMANDS) - {"reason", "calculate", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"query", "index"}
+    assert set(cli_main._COMMANDS) - {"reason", "calculate", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"query", "index"}
 
 
 # ------------------------------------------------------------------ every mode

@@ -70,7 +70,7 @@ def test_the_command_set_gains_exactly_manual():
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do",
               "procedure", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 17's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"research", "diagram", "voice", "ask", "source"} == before | {"manual"}
+    assert set(cli_main._COMMANDS) - {"research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"manual"}
 
 
 def test_section_215_the_documented_workflow_is_constructed(root):

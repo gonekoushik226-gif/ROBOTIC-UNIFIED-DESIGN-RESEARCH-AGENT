@@ -48,12 +48,12 @@ class Outcome(StrEnum):
 
 #: Intents the action path does not carry out, and where each is answered instead.
 UNAVAILABLE = {
-    "DELETE_FILE": "deletion is HIGH risk and not enabled (section 107)",
+    "DELETE_FILE": "deletion is HIGH risk and not enabled",
     "WEB_SEARCH": ('an Internet search needs your authorization of one website for the request: '
-                   'python -m app research "QUESTION" --site URL (ADR 0050)'),
-    "CREATE_PROJECT": ("a project is created only by a documented workflow from a manual you declared "
-                       "(ADR 0049); none could be looked up"),
-    "IMAGE_REQUEST": 'a diagram is drawn from stored knowledge: python -m app diagram "REQUEST" (ADR 0051)',
+                   'python -m app research "QUESTION" --site URL'),
+    "CREATE_PROJECT": ("a project is created only by a documented workflow from a manual you declared; "
+                       "none could be looked up"),
+    "IMAGE_REQUEST": 'a diagram is drawn from stored knowledge: python -m app diagram "REQUEST"',
     "UNRESOLVED_REFERENCE": "the object must be named first",
 }
 
@@ -178,7 +178,7 @@ class Pipeline:
             stages.append(Stage("PLAN", "NO_DOCUMENTED_WORKFLOW", f"no declared manual{wanted} documents creating a project"))
             return self._finish(text, interpretation, stages, Outcome.NOT_EXECUTED,
                                 f"nothing was executed: no documented workflow for creating a project{wanted} was "
-                                "found in your declared manuals; RUDRA does not invent one (section 111)",
+                                "found in your declared manuals; RUDRA does not invent one",
                                 commands=commands)
         built = tuple(construct(match, given.get("name")) for match in matches)
         if len(built) > 1:

@@ -20,8 +20,24 @@ The only third-party runtime dependency is `pypdf`. Everything else is the Pytho
 standard library or a component of Windows: the desktop window (Tkinter), the document
 readers, OCR and PDF page rendering (Windows' own `Windows.Media.Ocr` and
 `Windows.Data.Pdf`, reached through PowerShell), the Windows Credential Manager (through
-`ctypes`), the formula renderer, the backup format, the update check and the optional AI
-connections (HTTPS with `urllib`).
+`ctypes`), the microphone (`winmm`, through `ctypes`), the formula renderer, the backup
+format, the update check and the optional AI connections (HTTPS with `urllib`).
+
+### The speech recogniser
+
+The microphone button and the `voice` command need the offline speech recogniser: the
+whisper.cpp program, an OpenAI Whisper model and the Silero voice-activity model, all MIT
+licensed (see [VOICE.md](VOICE.md)). They are not committed (the model is 190 MB). Fetch them
+once into `speech\`:
+
+```powershell
+.venv\Scripts\python.exe windows\fetch_speech.py          # downloads about 200 MB, verifies every SHA-256
+.venv\Scripts\python.exe windows\fetch_speech.py --check  # downloads nothing; verifies what is there
+```
+
+Every file is pinned by URL, size and SHA-256 in the script and a mismatch is refused. Without
+`speech\` the application still runs: voice reports that recognition is not installed, and the
+tests that need it skip. `RUDRA_SPEECH_DIR` points the program at another folder.
 
 ## Tests
 
@@ -48,24 +64,30 @@ installed. The suite takes several minutes. A few tests read one real textbook w
 2. runs the test suite (skip with `--skip-tests`);
 3. builds `dist\RUDRA\` with PyInstaller from `windows\RUDRA.spec`: `RUDRA.exe` (the
    window) and `RUDRA-CLI.exe` (the command line) over one `_internal\` folder;
+   then copies the verified `speech\` folder to `dist\RUDRA\speech\` (the build stops if it
+   is missing - run `windows\fetch_speech.py` first);
 4. self-tests both programs in temporary folders — the command line through a
-   representative workflow, and the window through its own forms, including the answer
-   view, View Sources, formula typesetting, export and restore;
+   representative workflow, including a sentence spoken into a WAV file and read back by the
+   packaged recogniser, and the window through its own forms, including the answer
+   view, View Sources, formula typesetting, a calculation set as a worked solution, the
+   Knowledge page, export and restore;
 5. checks the package: no database, document, log, backup or data folder, and no path of
    the build machine inside any file or embedded archive;
-6. collects the license texts of the bundled components into `build\licenses\`;
+6. collects the license texts of the bundled components (Python, pypdf, PyInstaller and the
+   three speech components) into `build\licenses\`;
 7. with `--installer`, compiles `installer\RUDRA.iss` with Inno Setup 6 into
    `dist\installer\RUDRA-Setup-<version>-win64.exe` and writes `SHA256SUMS.txt`.
 
 ### Installer test
 
 ```powershell
-.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-0.1.0-win64.exe
+.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-1.0.0-win64.exe
 ```
 
 It installs silently for the current user into a temporary folder, runs the installed
 programs with no Python on `PATH` and with `LOCALAPPDATA` pointed into that folder, imports
-a PDF, asks a question, runs the window's self-test with the network cut off, installs
+a PDF, asks a question, has a sentence spoken into a WAV file and recognized offline by the
+installed recogniser, runs the window's self-test with the network cut off, installs
 again over the existing installation (or a newer installer given with `--upgrade-to`),
 uninstalls, and checks that the user's data survived both.
 
@@ -79,13 +101,16 @@ builds, tests and drafts a release, and the review before publishing. The **CI**
 
 | Path | What it holds |
 |---|---|
-| `app/` | The application: storage, extraction, query, reasoning, calculation, provenance, interpretation, actions, the command line (`app/ui/cli`) and the window (`app/ui/gui`) |
+| `app/` | The application: storage, extraction, query, reasoning, calculation, equation selection (`app/solving`), the knowledge inventory (`app/inventory`), provenance, interpretation, actions, the command line (`app/ui/cli`) and the window (`app/ui/gui`) |
 | `app/storage/schema/` | The database migrations |
 | `app/storage/archive.py` | Knowledge-base backup and restore |
 | `app/updates/` | The update notice |
 | `app/documents/` | Format detection, the document readers, OCR, and PDF equation reconstruction (`pdfmath.py`) |
 | `app/providers/` | Optional AI assistance: provider connections, consent settings, the credential store, grounding checks |
 | `app/ui/gui/mathrender.py` | The formula parser, layout and renderer |
+| `app/ui/gui/worked.py` | A calculation prepared as a worked solution for the renderer |
+| `app/voice/` | Speech: the recogniser (`engine.py`), microphone capture (`capture.py`), the user's words (`words.py`), speech output |
+| `speech/` | The offline speech recogniser, fetched by `windows/fetch_speech.py` (not committed) |
 | `config/rudra.toml` | The default configuration, with every setting explained |
 | `tests/` | Unit and integration tests |
 | `windows/` | The PyInstaller specification, entry points, build script and installer test |

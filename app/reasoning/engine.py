@@ -88,12 +88,12 @@ _ESTABLISHED = (NodeState.AVAILABLE, NodeState.DERIVED)
 
 STORED_SET_NOTE = (
     "Requirement sets are the stored REQUIRES and DEPENDS_ON relationships between "
-    "concepts, each treated as complete (ADR 0038 P10-4): a requirement no source "
+    "concepts, each treated as complete: a requirement no source "
     "stated, or one extraction did not store, is not known to this reasoning."
 )
 NOT_A_FACT_NOTE = (
     "A DERIVED node is a reasoning result under the requirement-set rule, not a source "
-    "fact; it and its trace are returned only, and nothing was written (U5(a))."
+    "fact; it and its trace are returned only, and nothing was written."
 )
 
 
@@ -416,7 +416,7 @@ class ReasoningEngine:
         if conditional:
             notes.append(
                 "Results marked conditional rest on the request's assumption(s) "
-                + ", ".join(conditional) + " (U7(b)); they are not established without them."
+                + ", ".join(conditional) + "; they are not established without them."
             )
         if any(not m.paths_complete for m in methods):
             notes.append(
@@ -428,7 +428,7 @@ class ReasoningEngine:
             notes.append(
                 "Stored items without evidence from a source that is authorised and in "
                 f"the requested scope ({request.scope.value}), or stored DELETED or "
-                "ARCHIVED, were not used; they are counted under withheld (P9-5, P9-23)."
+                "ARCHIVED, were not used; they are counted under withheld."
             )
         return ReasoningResult(
             request=request,

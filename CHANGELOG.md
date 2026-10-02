@@ -1,34 +1,98 @@
 # Changelog
 
-## Unreleased
+## 1.0.0
 
-Simplified the desktop window for everyday use, without changing what RUDRA does
-underneath.
+Initial public release — 2026-10-02.
+
+A pass over the whole journey - install, add a document, ask, calculate, back up, restore,
+speak, restart, uninstall - repairing what a careful user would trip over.
+
+### Added
+
+- **Calculations are shown as worked solutions.** The result sits on a card of its own
+  (*I = 0.4 A*, unit upright); under it, what you gave, then each step as an equation and the
+  same equation with its values put in - fractions stacked, subscripts lowered (*R*<sub>total</sub>),
+  large numbers grouped (*20 000 Ω*) - and the independent check. Equations that disagree are
+  set side by side, none chosen; the formula an unanswerable calculation was missing is
+  typeset. LaTeX in a quotation from your sources is typeset where it stands, and
+  `\( \)`, `\[ \]`, `$$` and `$` are never shown as delimiters. The plain lines are unchanged
+  in the command line, the JSON and Copy. See [docs/MATH.md](docs/MATH.md).
+- **Offline speech recognition with Whisper.** The microphone button now uses OpenAI's
+  Whisper model (small.en, MIT) run by whisper.cpp (MIT) with the Silero voice-activity
+  model (MIT), entirely on your computer - no cloud, no account, nothing stored. It replaces
+  Windows' built-in dictation, which turned *"My name is Kaushik"* into *"Like name is go
+  seek"*: on a 96-recording test set the share of words wrong fell from 38.2% to 2.6% (see
+  [docs/VOICE.md](docs/VOICE.md) for the method, the figures and their limits). Listening
+  ends by itself when you stop talking or when you click; the button and the status line
+  say whether RUDRA is listening or working out the words; a reading the model was unsure
+  of is flagged **CHECK THE WORDS**; silence gives nothing, not invented words.
+- **Words to spell as written** (Settings > Voice): names and terms speech gets wrong, kept
+  on your computer and given to the recognizer as context.
+- `python windows\fetch_speech.py` puts the speech files (pinned by SHA-256) beside the
+  program for a source checkout and for the build; the installer includes them.
+
+- **RUDRA chooses the equations for a calculation.** Ask *"Calculate the current when
+  V = 10 V and R = 5 ohms"* or *"Find the output voltage if Vin = 12 V, R1 = 10 kΩ and
+  R2 = 20 kΩ"* and RUDRA works out what is asked, what you gave, and which of your stored
+  equations connect the two - turning them around where needed and chaining two, three or
+  more in the right order, with every intermediate value shown and checked independently.
+  If the documents do not suffice it says exactly what is missing; it never invents a
+  formula. Equations that give different values are both shown and none is chosen; routes
+  that agree confirm each other; a route that mixes incompatible dimensions is rejected.
+  Also available as the `solve` command.
+- **Knowledge inventory.** A new Knowledge page (and the `inventory` command) lists, for
+  every document, what was stored, what was linked to knowledge already held and what was
+  *not* stored and why - with the page and exact quote behind every item and whether each
+  equation can be calculated with. Adding a document ends with the same plain summary, and
+  says so honestly when a document gave nothing to store.
+- **Ask finds what is only mentioned.** A question about something no document defines
+  (*"What is the gain?"*) now answers with the passages that mention it, labelled as
+  mentions rather than definitions, instead of "unknown".
+- **The search index looks after itself.** Adding a document makes it searchable at once,
+  and asking rebuilds a missing index without being told to.
+
+### Changed
 
 - **Ask does calculation too.** The standalone Calculate page is gone; ask RUDRA to
-  calculate the same way you ask anything else, stating the formula and values in one
-  sentence (*"Calculate I given I = V / R, V = 10 V and R = 5 Ω."*). Natural phrasing with
-  "is" instead of "=" is read the same way (*"R1 is 10 ohms"*). The calculation engine and
-  its CLI command are unchanged; RUDRA still never chooses a formula.
-- **Speak instead of typing.** A microphone button beside Ask's question field (and the
-  assistant's own input) dictates with Windows' own speech recognition; the recognized
-  words can be edited before sending, and listening can be stopped early.
-- **Add document**, not Import: choosing and adding a file now ends with a short,
-  plain-language result ("Added to your knowledge base", or "...with some extraction
-  warnings") instead of the command's raw technical report; that report is still there, one
-  click away behind **Details**.
-- **Settings** is now the one place for maintenance: checking for updates, backing up and
-  restoring your knowledge, managing optional AI assistance, and uninstalling RUDRA (through
-  the real Inno Setup uninstaller - the same one Windows Settings > Apps would use). Status,
-  Lookup, Provenance, Command and Help remain available, grouped as Advanced.
+  calculate the same way you ask anything else, in plain English, or state the formula
+  yourself (*"Calculate I given I = V / R, V = 10 V and R = 5 Ω."*). The calculation engine
+  and its command are unchanged.
+- **The window opens on Ask**, with a welcome that says what RUDRA holds and what to do
+  next. Add document, Knowledge and Settings are the everyday pages; Status, Lookup,
+  Provenance, Command and Help are grouped as Advanced. Pages that are taller than the window
+  scroll instead of being cut off.
+- **Add document** ends with a short, plain-language result instead of the command's
+  technical report (still one click away behind **Details**). A file that cannot be added
+  says what to do about it (for example, save an old `.doc` file as `.docx`).
+- **Settings** is the one place for maintenance: checking for updates, testing the
+  microphone, backing up and restoring your knowledge, managing optional AI assistance and
+  uninstalling RUDRA through the real uninstaller.
+- Wording throughout the window and the command line is for people, not for the project's
+  development history.
+
+### Fixed
+
+- **A calculation's steps were hard to read** (linear text such as `I = 12 V ÷ 30 Ω`, and a
+  stored equation shown in View Sources as `f = \frac{1}{T}`). See *Added*.
+- **Speech recognition was unusable** for ordinary English and names. See *Added*.
+- The Ask page's example *"Which equations are stored for resistance?"* was not a question
+  RUDRA understands; it now reads *"Which equations are given for resistance?"*.
+
+- **The microphone button no longer flashes a Windows console window.** Speech recognition
+  and synthesis start their helper hidden. A missing microphone, silence, a cancelled
+  listen and a failed attempt each give a plain explanation and can be retried.
+- `--help` no longer crashes on a console that cannot display every character.
+- Two stored equations that give different values for unitless numbers are shown as a
+  conflict ("V = 10; V = 7"), not as a bare list.
+- A document whose result pane was left on screen no longer squeezes the Knowledge list.
 - pypdf's own "fontTools is required..." warning no longer appears while reading a PDF's
   text. Investigated and found to make no measured difference on the project's reference
   document (RUDRA does not bundle the optional `fontTools` package); see
   [docs/FORMATS.md](docs/FORMATS.md).
 
-## 0.1.0
+### Earlier implementation (0.1.0 draft; never released)
 
-First public release of RUDRA for Windows.
+This functionality was present in the unpublished 0.1.0 draft and is included in RUDRA 1.0.0.
 
 ### Documents and knowledge
 

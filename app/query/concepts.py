@@ -238,17 +238,17 @@ def _note(context: QueryContext, name: str, filled: bool) -> str | None:
         if filled:
             return (
                 f"Only {d1_type.value} objects with a stored edge to a resolved concept are "
-                "listed; none is attached by co-location or a word match (D1, ADR 0035 P9-3)."
+                "listed; none is attached by co-location or a word match."
             )
         if d1_type not in context.linked_types():
             return (
                 f"No stored edge links any {d1_type.value} object to any concept in this "
                 "database, so none is claimed as knowledge about the concept. Section 199 is "
-                "PARTIALLY IMPLEMENTED for this category (D1, ADR 0035 P9-3)."
+                "PARTIALLY IMPLEMENTED for this category."
             )
         return (
             f"No {d1_type.value} object has a stored edge to the resolved concept(s) within "
-            "the scope and filters (D1, ADR 0035 P9-3)."
+            "the scope and filters."
         )
     if filled:
         return None

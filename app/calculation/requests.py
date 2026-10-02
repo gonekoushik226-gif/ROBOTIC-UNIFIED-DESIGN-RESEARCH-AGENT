@@ -217,6 +217,6 @@ class CalculationRequest:
             raise refuse(
                 f"The admitted item {identifier!r} is an identifier of the wrong kind.",
                 "Only a knowledge object can be admitted, and it must be a stored equation "
-                "(ADR 0042 P11-19).",
+                ".",
             )
         return identifier

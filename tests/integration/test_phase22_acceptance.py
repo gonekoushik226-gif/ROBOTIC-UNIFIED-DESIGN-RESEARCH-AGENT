@@ -65,7 +65,7 @@ def test_the_command_set_gains_exactly_ask():
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do",
               "procedure", "manual", "research", "diagram", "voice", "version"}
     # Phase 23 adds `source` (ADR 0055); Phase 22's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"source"} == before | {"ask"}
+    assert set(cli_main._COMMANDS) - {"source", "solve", "inventory"} == before | {"ask"}
 
 
 def test_section_227_a_knowledge_answer_with_basis_sources_and_status(root):
@@ -98,7 +98,7 @@ def test_section_228_cannot_determine_with_what_is_missing_and_why(root):
     assert code == 3 and part["status"] == "CANNOT_DETERMINE"
     assert part["answer"].startswith("I cannot determine this from the currently authorized information.")
     assert (part["missing"], part["why"], part["available"]) == (["R"], ["R is required by I = V / R"], ["V = 10 V"])
-    assert len(part["next_steps"]) == 4
+    assert len(part["next_steps"]) == 3
 
 
 def test_section_229_disagreeing_sources_are_not_resolved(root):
@@ -132,16 +132,17 @@ def test_a_request_that_needs_information_runs_nothing(root):
 
 
 def test_voice_through_ask_equals_text(root, tmp_path):
-    from app.voice import SpeechUnavailable, synthesize
+    from app.voice import SpeechUnavailable, engine, synthesize
 
     audio = tmp_path / "open.wav"
     try:
         synthesize("Open Calculator.", audio)
+        engine.find_components()
     except SpeechUnavailable as missing:
-        pytest.skip(f"the Windows speech engine is not available: {missing.reason}")
+        pytest.skip(f"speech is not available: {missing.reason}")
     code, spoken = _ask(root, "--audio", str(audio), "--dry-run")
     code_typed, typed = _ask(root, spoken["speech"]["text"], "--dry-run")
-    assert code == code_typed == 0 and spoken["speech"]["grammar"] == "commands"
+    assert code == code_typed == 0 and spoken["speech"]["grammar"] == "dictation"
     assert [p["status"] for p in spoken["parts"]] == [p["status"] for p in typed["parts"]] == ["DONE"]
     assert spoken["parts"][0]["actions"] == typed["parts"][0]["actions"]
 

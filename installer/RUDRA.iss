@@ -1,6 +1,6 @@
 ; Inno Setup script for the RUDRA Windows installer.
 ;
-;   iscc /DAppVersion=0.1.0 installer\RUDRA.iss
+;   iscc /DAppVersion=1.0.0 installer\RUDRA.iss
 ;
 ; windows\build.py --installer runs this after building dist\RUDRA and collecting the
 ; license texts into build\licenses. The result is dist\installer\RUDRA-Setup-<version>-win64.exe.
@@ -61,8 +61,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [InstallDelete]
-; An upgrade replaces the runtime completely, so no file of an older version lingers.
+; An upgrade replaces the runtime and the speech recogniser completely, so no file of an older
+; version lingers. (The user's own words for the recogniser live in the data folder, not here.)
 Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\speech"
 
 [Files]
 Source: "..\dist\RUDRA\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

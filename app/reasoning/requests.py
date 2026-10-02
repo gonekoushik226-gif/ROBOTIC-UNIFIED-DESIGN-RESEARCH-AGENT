@@ -138,7 +138,7 @@ class Admission:
         if not is_valid_id(identifier, kind=EntityKind.KNOWLEDGE_OBJECT):
             raise refuse(
                 f"The admitted item {identifier!r} is an identifier of the wrong kind.",
-                "Only knowledge objects can be admitted (ADR 0040 P10-27): concepts, "
+                "Only knowledge objects can be admitted: concepts, "
                 "relationships, documents and other identifiers cannot.",
             )
 

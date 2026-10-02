@@ -94,7 +94,7 @@ def test_phase_11_adds_exactly_the_calculate_command():
               "edition", "merge", "query", "index", "reason", "version"}
     # Phase 12 adds `provenance` (ADR 0044 P12-15, P12-16); Phase 11's own addition is unchanged.
     # Phase 13 adds `interpret` (ADR 0045 P13-14).
-    assert set(cli_main._COMMANDS) - {"provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"calculate"}
+    assert set(cli_main._COMMANDS) - {"provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"calculate"}
 
 
 # ----------------------------------------------------- without an admission

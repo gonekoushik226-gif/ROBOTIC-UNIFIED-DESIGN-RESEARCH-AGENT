@@ -131,7 +131,7 @@ def operating_system_facts() -> tuple[str, str, str]:
     On a Windows 10 or 11 workstation they are read from `sys.getwindowsversion()` - the
     version fields the `platform` module's WMI query returns, and its own release table
     (build 22000 and later is "11") - because the WMI queries cost about 0.1 s at every
-    startup (Phase 21, ADR 0053). Anything else asks `platform` itself.
+    startup. Anything else asks `platform` itself.
     """
     if sys.platform == "win32":
         winver = sys.getwindowsversion()
@@ -148,12 +148,12 @@ def _operating_system() -> Component:
     return Component(
         component="Operating system",
         detected=detected,
-        required="Windows 11 is the target platform",
+        required="Windows 10 or 11",
         available=True,
         impact=(
-            "Target platform."
+            "Supported."
             if supported
-            else "Computer-control features target Windows; other platforms are untested."
+            else "RUDRA is made for Windows; other systems are untested."
         ),
         recommendation="-" if supported else "Expect Windows-only features to be unavailable.",
         status=Status.OK if supported else Status.WARNING,
@@ -180,9 +180,9 @@ def _cpu() -> Component:
     return Component(
         component="CPU",
         detected=detected,
-        required="Any; RUDRA is CPU-first and single-machine",
+        required="Any; RUDRA works on the processor alone",
         available=logical is not None,
-        impact="Determines how much work can run in parallel later.",
+        impact="How many things RUDRA can work on at once.",
         recommendation="-",
         status=Status.OK if logical else Status.UNKNOWN,
     )
@@ -210,10 +210,10 @@ def _memory(config: RudraConfig) -> Component:
         impact=(
             "Little headroom; large operations may page and slow the machine."
             if low
-            else "Sufficient headroom for the work implemented so far."
+            else "Enough free memory."
         ),
         recommendation=(
-            "Close memory-heavy applications before ingesting large documents."
+            "Close memory-heavy applications before adding large documents."
             if low
             else "-"
         ),
@@ -265,24 +265,24 @@ def _disk(layout: PathLayout, config: RudraConfig) -> Component:
             detected=f"{UNKNOWN} (free space could not be read)",
             required=f"at least {config.resources.min_free_disk_mb} MB free",
             available=None,
-            impact="Storage limits cannot be checked before large operations.",
-            recommendation="Check free space manually before ingesting documents.",
+            impact="Free space cannot be checked before large operations.",
+            recommendation="Check free space yourself before adding documents.",
             status=Status.UNKNOWN,
         )
     if free_mb < config.resources.min_free_disk_mb:
         status, impact, action = (
             Status.CRITICAL,
             "Too little space for safe operation.",
-            "Free disk space before ingesting anything.",
+            "Free some disk space before adding anything.",
         )
     elif free_mb < config.resources.warn_free_disk_mb:
         status, impact, action = (
             Status.WARNING,
-            "Space is limited; large ingestion jobs may not fit.",
-            "Keep an eye on free space, or move data_root to a larger volume.",
+            "Space is limited; very large documents may not fit.",
+            "Keep an eye on free space, or keep RUDRA's data on a larger drive.",
         )
     else:
-        status, impact, action = (Status.OK, "Sufficient for current work.", "-")
+        status, impact, action = (Status.OK, "Enough free space.", "-")
     return Component(
         component="Disk (data volume)",
         detected=f"{free_mb} MB free at {layout.data_root}",
@@ -298,9 +298,9 @@ def _sqlite() -> Component:
     return Component(
         component="SQLite",
         detected=f"library {sqlite3.sqlite_version} (Python standard library sqlite3)",
-        required="Bundled with Python; the planned storage engine",
+        required="Built into RUDRA",
         available=True,
-        impact="Storage engine for the knowledge database from Phase 2 onward.",
+        impact="Keeps your knowledge on this computer.",
         recommendation="-",
     )
 
@@ -310,14 +310,14 @@ def _sqlite_fts5() -> Component:
     return Component(
         component="SQLite FTS5",
         detected="available" if available else f"not available ({detail})",
-        required="Needed for keyword search from Phase 9",
+        required="Needed for searching your documents by word",
         available=available,
         impact=(
-            "Keyword search will be available."
+            "Searching by word works."
             if available
-            else "Keyword search would need another mechanism."
+            else "Searching by word will not work; asking about concepts still does."
         ),
-        recommendation="-" if available else "Raise this before Phase 9 planning.",
+        recommendation="-" if available else "Use the packaged RUDRA, which includes it.",
         status=Status.OK if available else Status.NOT_AVAILABLE,
     )
 
@@ -337,14 +337,14 @@ def _tkinter() -> Component:
     return Component(
         component="tkinter (GUI toolkit)",
         detected=detail,
-        required="Optional; candidate for the mini assistant window (Phase 13+)",
+        required="Needed for RUDRA's window",
         available=available,
         impact=(
-            "A GUI can be built without adding a dependency."
+            "RUDRA's window can open."
             if available
-            else "A GUI would need a third-party toolkit."
+            else "RUDRA's window cannot open; the command line still works."
         ),
-        recommendation="-" if available else "Revisit when the interface phase starts.",
+        recommendation="-" if available else "Use the packaged RUDRA, which includes it.",
         status=Status.OK if available else Status.NOT_AVAILABLE,
     )
 
@@ -367,7 +367,7 @@ def _project_root(layout: PathLayout) -> Component:
         detected=str(layout.project_root),
         required="Must exist and be writable",
         available=True,
-        impact="All RUDRA data and configuration live under this directory.",
+        impact="Everything RUDRA keeps - documents, knowledge, settings - lives in this folder.",
         recommendation="-",
     )
 
@@ -397,7 +397,7 @@ def _data_root(layout: PathLayout) -> Component:
         detected=str(layout.data_root),
         required="Created at startup",
         available=layout.data_root.is_dir(),
-        impact="Holds documents, database, indexes, caches and backups as separate layers.",
+        impact="Holds your documents, knowledge, search index, caches and backups, each in its own folder.",
         recommendation="-",
         status=Status.OK if layout.data_root.is_dir() else Status.CRITICAL,
     )

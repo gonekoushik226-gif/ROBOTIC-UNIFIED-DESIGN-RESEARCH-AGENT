@@ -170,9 +170,9 @@ def verify_calculation(answer: RecordedAnswer, repository: Repository | None) ->
         checks=tuple(checks),
         exposure=exposure,
         database_opened=repository is not None and bool(answer.request.admissions),
-        notes=("Nothing was written: the verification is returned only (ADR 0044 P12-3).",
+        notes=("Nothing was written: the verification is returned only.",
                "The answer file was read as untrusted input: its request was run again and its "
-               "results compared, never believed (P12-12)."),
+               "results compared, never believed."),
     )
 
 

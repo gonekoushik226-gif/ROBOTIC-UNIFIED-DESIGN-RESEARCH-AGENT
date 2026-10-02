@@ -11,16 +11,16 @@ section 229's conflict lines, and section 230's *"Unknown."*. Nothing is invente
 part is read from the command's answer, and a part the answer does not hold is left empty.
 """
 
+import re
 from dataclasses import dataclass
 
 CANNOT = "I cannot determine this from the currently authorized information."
 UNKNOWN = "Unknown."
 INSUFFICIENT = "Insufficient information."
 NEXT_STEPS = (
-    "Provide the missing information.",
-    "Use another authorized source (python -m app extract FILE.pdf).",
-    'Authorize an Internet search: python -m app research "QUESTION" --site URL.',
-    "Cancel.",
+    "Try asking in other words.",
+    "Add a document that covers it (python -m app extract FILE.pdf).",
+    'Look it up on one website you choose: python -m app research "QUESTION" --site URL.',
 )
 MAX_SOURCES = 5
 
@@ -103,8 +103,106 @@ def _dedup(items) -> tuple[str, ...]:
     return tuple(dict.fromkeys(items))
 
 
+def _keyword_items(keyword: dict) -> list[dict]:
+    """Keyword mode's own shape (ADR 0035/0036 P9-3, P9-22): stored text matched the term
+    through the derived index, then every hit was re-read from knowledge.db and
+    scope-checked - rendered the same honest way concept mode renders a stored statement.
+    A keyword hit is never presented as a stored link to a concept (it is not one)."""
+    records = []
+    for item in keyword.get("knowledge", ()):
+        knowledge = item.get("knowledge") or {}
+        kind = str(knowledge.get("knowledge_type") or "Statement").replace("_", " ").title()
+        line = f"{kind}: {' '.join(str(knowledge.get('statement', '')).split())}"
+        why = _why_uncertain(knowledge, item.get("evidence", ()))
+        records.append({"kind": kind, "line": line, "basis": knowledge.get("id", ""),
+                        "sources": [_source(row) for row in item.get("evidence", ())],
+                        "uncertain": f"{line} - {why}" if why else None})
+    for item in keyword.get("concepts", ()):
+        concept = item.get("concept") or {}
+        records.append({"kind": "Concept", "line": f"Concept: {concept.get('canonical_name', '')}",
+                        "basis": concept.get("id", ""),
+                        "sources": [_source(row) for row in item.get("occurrences", ())], "uncertain": None})
+    return records
+
+
+#: The order statements that merely mention a term are shown in: what states something first.
+_MENTION_ORDER = {"Definition": 0, "Rule": 1, "Property": 2, "Equation": 3, "Concept": 4, "Variable": 5, "Unit": 6,
+                  "Procedure": 7, "Example": 8}
+MAX_MENTIONS = 8
+
+
+MAX_PASSAGES = 3
+
+
+def _passages(text: str, term: str, limit: int = MAX_PASSAGES) -> list[str]:
+    """The sentences or lines of a page that contain `term`, trimmed, in reading order."""
+    wanted = " ".join(term.casefold().split())
+    found: list[str] = []
+    for chunk in re.split(r"(?<=[.!?])\s+|\n+", text):
+        flat = " ".join(chunk.split())
+        if wanted and wanted in flat.casefold() and flat not in found:
+            found.append(flat if len(flat) <= 240 else flat[:237] + "...")
+        if len(found) >= limit:
+            break
+    return found
+
+
+def from_mentions(unknown: "Part", keyword_answer: dict, name: str, output: str | None = None) -> "Part":
+    """No stored definition of `name`, but the documents mention it: say exactly that.
+
+    What follows is the stored text that contains the words - labelled as mentions, never
+    as RUDRA's definition of the concept, which is what an exact lookup would have returned.
+    Where no stored statement mentions it but a page's own text does, that sentence is quoted
+    as page text, which RUDRA did not extract as knowledge.
+    """
+    keyword = keyword_answer.get("keyword") or {}
+    records = _keyword_items(keyword)
+    records.sort(key=lambda r: _MENTION_ORDER.get(r["kind"], 9))
+    shown, more = records[:MAX_MENTIONS], max(0, len(records) - MAX_MENTIONS)
+    passages: list[tuple[str, str]] = []  # (line, source)
+    if not shown:
+        for hit in keyword.get("pages", ()):
+            segment = hit.get("segment") or {}
+            document = (hit.get("document") or {}).get("document") or {}
+            where = f"{document.get('original_filename') or segment.get('document_id', '?')}, page {segment.get('page_number', '?')}"
+            for sentence in _passages(str(segment.get("text", "")), str(keyword.get("term") or name)):
+                passages.append((f"Page text ({where}): {sentence}",
+                                 f"{segment.get('document_id', '?')} p.{segment.get('page_number', '?')}: \"{sentence}\""))
+            if len(passages) >= MAX_PASSAGES:
+                break
+        passages = passages[:MAX_PASSAGES]
+    missing = {"equations": "No equation is linked to", "variables": "No variable is linked to",
+               "properties": "No property is stored for", "prerequisites": "No prerequisite is stored for",
+               "locations": "No stored statement defines or describes"}.get(output or "", "No definition of")
+    if not shown:
+        header = f"Nothing about '{name}' was stored as knowledge, but your documents mention it:"
+    elif missing == "No definition of":
+        header = f"No definition of '{name}' is stored, but your documents mention it:"
+    else:
+        header = f"{missing} '{name}' in your documents, but they mention it:"
+    lines = [header, *(r["line"] for r in shown), *(line for line, _source in passages)]
+    if more:
+        lines.append(f"...and {more} more statement(s) that mention it.")
+    sources = [src for r in shown for src in r["sources"]] + [source for _line, source in passages]
+    why = (f"These are statements that contain the words. They are not a stored definition of '{name}': no "
+           "document states one in a form RUDRA recognises." if shown else
+           "This is the page's own text. RUDRA did not extract it as knowledge, so it cannot reason with it "
+           "or calculate from it.")
+    # Asked for what a thing is, the mentions are the knowledge there is. Asked for a specific link
+    # (its equations, variables, properties ...) that no stored edge gives, the answer is still
+    # Unknown - the mentions are shown beside it, not instead of it.
+    answered = output in (None, "definition", "explanation", "summary", "definitions_all", "everything")
+    return Part(
+        number=unknown.number, request=unknown.request, intent=unknown.intent, path="KNOWLEDGE",
+        command=unknown.command, status="ANSWERED" if answered else "UNKNOWN", answer="\n".join(lines),
+        basis=_dedup(r["basis"] for r in shown if r["basis"]), sources=_dedup(sources)[:MAX_SOURCES],
+        reasoning=(why,), uncertain=_dedup(r["uncertain"] for r in shown if r["uncertain"]),
+        next_steps=() if answered else NEXT_STEPS, detail=keyword_answer)
+
+
 def from_query(number: int, request: str, intent: str, command, answer: dict, output: str | None) -> Part:
-    """A `query` answer: the requested group(s) of the resolved concept (sections 227, 229, 230)."""
+    """A `query` answer: the requested group(s) of the resolved concept, or - in keyword
+    mode, which resolves no concept - the stored text that matched (sections 227, 229, 230)."""
     status = answer.get("status")
     common = dict(number=number, request=request, intent=intent, path="KNOWLEDGE", command=tuple(command), detail=answer)
     if status == "NOT_FOUND":
@@ -149,6 +247,14 @@ def from_query(number: int, request: str, intent: str, command, answer: dict, ou
                 lines.append(f"{relationship.get('relation_type', 'RELATED')}: {names}")
                 basis.append(relationship.get("id", ""))
                 sources.extend(_source(row) for row in edge.get("evidence", ()))
+    keyword = answer.get("keyword") or {}
+    if keyword:
+        for record in _keyword_items(keyword):
+            lines.append(record["line"])
+            basis.append(record["basis"])
+            sources.extend(record["sources"])
+            if record["uncertain"]:
+                uncertain.append(record["uncertain"])
     conflicts = []
     for item in concept.get("conflicts", ()):
         record = item.get("conflict", {})
@@ -214,6 +320,93 @@ def from_calculation(number: int, request: str, intent: str, command, answer: di
     return Part(status="CANNOT_DETERMINE", answer=f"{CANNOT} {answer.get('message', '')}".strip(), calculation=steps,
                 assumptions=assumptions, sources=sources, missing=missing, why=why, available=available,
                 unavailable=missing, next_steps=NEXT_STEPS, **common)
+
+
+_CHECKED = {
+    "VERIFIED": "checked: an independent evaluation reproduced every step",
+    "INCONCLUSIVE": "not independently confirmed: the value is the one you gave",
+    "FAILED": "the independent check FAILED - do not rely on this result",
+}
+SOLVE_NEXT_STEPS = (
+    "Give the missing value or values, for example by adding them to the question.",
+    "Use the symbol your documents use for a quantity, if you named it differently.",
+    "Add a document that states the relation you need.",
+)
+
+
+def from_solution(number: int, request: str, intent: str, command, answer: dict) -> Part:
+    """A `solve` answer: the quantity RUDRA calculated by choosing the stored equations itself,
+    with the route it took and its checks - or what the documents do not establish."""
+    common = dict(number=number, request=request, intent=intent, path="KNOWLEDGE", command=tuple(command), detail=answer)
+    names = {symbol: name for symbol, name in answer.get("quantities") or ()}
+
+    def label(symbol: str) -> str:
+        return f"{symbol} ({names[symbol]})" if names.get(symbol) else str(symbol)
+
+    target = answer.get("target") or {}
+    goal = target.get("symbol") or target.get("asked") or "the quantity"
+    known = [g for g in answer.get("givens") or () if g.get("symbol")]
+    available = tuple(f"{label(g['symbol'])} = {g['value']}" for g in known)
+    steps = answer.get("steps") or []
+    status = answer.get("status")
+    if status == "CALCULATED" and answer.get("result"):
+        result = answer["result"]
+        unit = f" {result['unit']}" if result.get("unit") else ""
+        value = f"{goal} {result.get('relation', '=')} {result.get('displayed', '?')}{unit}"
+        reasoning = [f"Asked for {label(goal)}" + (f" from {', '.join(available)}." if available else ".")]
+        if steps:
+            reasoning.append(f"Chose {len(steps)} equation(s) from your documents, applied in this order.")
+        reasoning += [note for note in answer.get("notes") or ()]
+        calculation = []
+        for step in steps:
+            turned = " (the stored equation, turned around)" if step.get("rearranged") else ""
+            calculation.append(f"Step {step['number']}: {step['formula']}{turned}  →  {step['substitution']}"
+                               f" = {step['result']['displayed']}{' ' + step['result']['unit'] if step['result'].get('unit') else ''}")
+        if not steps:
+            calculation.append(f"{goal} was among the values you gave.")
+        calculation.append(_CHECKED.get(answer.get("verification"), "not independently checked").capitalize())
+        sources, basis = [], []
+        for step in steps:
+            basis.append(step["knowledge_id"])
+            sources.append(f"{step['knowledge_id']}: the stored equation \"{' '.join(str(step['stored_text']).split())}\"")
+            sources.extend(_source(row) for row in step.get("evidence", ())[:2])
+        basis += [b["knowledge_id"] for b in [target, *known] if b.get("knowledge_id")]
+        uncertain = tuple(answer.get("uncertain") or ())
+        unused = answer.get("unused") or ()
+        assumptions = (f"Not needed for this result: {', '.join(unused)}.",) if unused else ()
+        return Part(status="ANSWERED", answer=value, reasoning=tuple(reasoning), calculation=tuple(calculation),
+                    assumptions=assumptions, sources=_dedup(sources)[:MAX_SOURCES * 2], basis=_dedup(b for b in basis if b),
+                    available=available, uncertain=uncertain, **common)
+    if status == "CONFLICTING":
+        lines = ["Conflict detected: stored equations give different values for " + label(goal) + "."]
+        for letter, route in zip("ABCDEFGH", answer.get("routes") or ()):
+            value = route.get("value") or {}
+            lines.append(f"Route {letter}: {' ; '.join(route.get('equations', ()))} gives "
+                         f"{label(goal)} {value.get('relation', '=')} {value.get('displayed', '?')} {value.get('unit', '')}".rstrip())
+        lines.append("Resolution: Not automatically selected.")
+        return Part(status="CANNOT_DETERMINE", answer=f"{CANNOT} {answer.get('message', '')}".strip(),
+                    conflicts=tuple(lines), available=available, next_steps=SOLVE_NEXT_STEPS[2:],
+                    reasoning=tuple(answer.get("notes") or ()), **common)
+    missing_lines, unavailable, why = [], [], []
+    for gap in answer.get("missing") or ():
+        needs = ", ".join(label(n) for n in gap.get("needs") or ()) or "nothing more"
+        missing_lines.append(f"{gap['formula']} would give it, and needs {needs}")
+        unavailable.extend(gap.get("needs") or ())
+        why.append(f"{gap['formula']} ({gap['knowledge_id']}) needs {needs}")
+    unknown = answer.get("unknown") or ()
+    for asked in unknown:
+        missing_lines.append(f"what '{asked}' stands for - none of your documents' equations or explanations says")
+    known_names = [f"{symbol} = {name}" for symbol, name in answer.get("known_quantities") or ()]
+    reasoning = list(answer.get("notes") or ())
+    if known_names:
+        reasoning.append("Quantities your documents name: " + "; ".join(known_names[:12]) + ".")
+    reasoning += [hint for hint in answer.get("suggestions") or ()]
+    for route in answer.get("routes") or ():
+        if route.get("problem"):
+            reasoning.append(f"{' ; '.join(route.get('equations', ()))}: {route['problem']}")
+    return Part(status="CANNOT_DETERMINE", answer=f"{CANNOT} {answer.get('message', '')}".strip(),
+                reasoning=tuple(reasoning), missing=tuple(missing_lines), why=_dedup(why), available=available,
+                unavailable=_dedup(unavailable), next_steps=SOLVE_NEXT_STEPS, **common)
 
 
 def from_provenance(number: int, request: str, intent: str, command, answer: dict) -> Part:

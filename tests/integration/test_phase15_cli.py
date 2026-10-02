@@ -29,7 +29,7 @@ def test_the_command_set_gains_exactly_do():
     before = {"start", "env", "config", "paths", "db", "extract", "classify", "lookup", "review", "edition",
               "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "version"}
     # Later phases add their own commands (ADR 0047 onward); Phase 15's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"do"}
+    assert set(cli_main._COMMANDS) - {"procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"do"}
 
 
 def test_open_calculator_dry_run_shows_every_stage(tmp_path, capsys):

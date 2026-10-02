@@ -299,7 +299,7 @@ def parse_formula(text: str, known_symbols: Collection[str] = ()) -> Formula:
         raise FormulaError(
             FormulaProblem.UNSUPPORTED_FORM,
             "The left-hand side must be one symbol, the formula's target; rearranging an "
-            "equation is symbolic solving, which Phase 11 does not do.",
+            "equation is symbolic solving, which this grammar does not do.",
         )
     target = left[0].text
     parser = _Parser(tokens[split + 1:])

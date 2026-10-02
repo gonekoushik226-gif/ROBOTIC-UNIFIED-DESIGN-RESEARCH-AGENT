@@ -3,63 +3,59 @@
 Commands
 --------
   start    Run the startup sequence and exit (the default).
-  env      Print the environment report.
+  env      Print what RUDRA found on this computer.
   config   Print every effective setting and where it came from.
-  paths    Print the directory layout and each directory's storage class.
+  paths    Print the folder layout and what each folder holds.
   db       Open the knowledge database, apply pending migrations, report it.
-  extract  Ingest a PDF (if new) and extract knowledge from it (Phase 5).
-  classify Organise one explicitly named extraction run (Phase 6).
-  lookup   Read one concept and its provenance by exact id or exact name,
-           read-only (Phase 7).
-  review   Read one knowledge object's conflicts, equivalence assessments and
-           sources by exact id, read-only (Phase 8).
-  edition  Record the user's declaration that two ingested documents are
-           editions of one work (Phase 8).
-  merge    Supersede in place the exact duplicates stored before Phase 8; only
-           when asked (Phase 8).
-  query    Structured retrieval - concept, exact, page or keyword mode - read-only;
-           the answer trace is returned, never stored (Phase 9).
-  index    Build or rebuild the derived keyword index from knowledge.db; writes
-           only data/indexes/index.db (Phase 9).
-  reason   Dependency-based reasoning over stored REQUIRES / DEPENDS_ON
-           relationships, read-only (Phase 10).
+  extract  Add a document (if new): read it and store what it states, then make it searchable.
+  inventory
+           What RUDRA knows: each document's result, and every item with its source;
+           what was found but not stored, and why. Read-only.
+  ask      One request, typed or spoken, through the whole application: knowledge,
+           calculation and actions joined, answered with sources and status.
+  solve    Calculate a quantity from the equations your documents state - RUDRA chooses
+           and chains them, rearranging where needed, and verifies the result. Read-only.
+  calculate
+           Exact, unit-aware calculation from a request that states its own formulas,
+           inputs and assumptions, and at most one admitted stored equation. Read-only.
+  query    Structured retrieval - concept, exact, page or keyword mode. Read-only.
+  index    Rebuild the derived keyword index (done automatically when a document is added).
+  lookup   Read one concept and its provenance by exact id or exact name. Read-only.
+  reason   Dependency-based reasoning over stored REQUIRES / DEPENDS_ON relationships.
   provenance
-           "Where did you get this?": the provenance of a stored item, or the
-           verification of a calculate/reason answer; read-only (Phase 12).
-  act      A parameterised action (section 208) through the action engine: a dry run
-           on the simulated computer, or with --execute live, after the permission check.
-  do       A request carried out on this computer: interpret, plan, permission,
-           execute, verify, report (Phase 15).
+           "Where did you get this?": the provenance of a stored item, or the verification
+           of a calculate/solve/reason answer. Read-only.
+  classify Organise one explicitly named extraction run.
+  review   Read one knowledge object's conflicts, equivalence assessments and sources.
+  edition  Record that two documents are editions of one work.
+  merge    Supersede in place exact duplicates stored by an earlier version; only when asked.
+  act      A parameterised action through the action engine: a dry run on the simulated
+           computer, or with --execute live, after the permission check.
+  do       A request carried out on this computer: interpret, plan, permission, execute,
+           verify, report.
   procedure
-           Procedural memory: list and show the documented procedures RUDRA stores, and
-           run one you name - dry, or live with --confirm, recorded (Phase 16).
+           Documented procedures: list and show them, and run one you name - dry, or live
+           with --confirm, recorded.
   manual   Application manuals you declared (extract --manual): their menus, commands,
-           workflows, shortcuts, parameters, constraints and file formats (Phase 17).
+           workflows, shortcuts, parameters, constraints and file formats.
   research Local knowledge first; the Internet only through a website you name with
-           --site, recorded and labelled external (Phase 18).
-  diagram  A structure diagram of one concept (SVG and its specification) from stored
-           knowledge only; unknowns marked, never invented (Phase 19).
-  voice    Speech to text through Windows' own engine, then exactly what 'do' does with
-           that text; voice never authorizes (Phase 20).
-  ask      One request, typed or spoken, through the whole architecture: knowledge and
-           actions joined, answered with sources and status (Phase 22).
+           --site, recorded and labelled external.
+  diagram  A structure diagram of one concept from stored knowledge only; unknowns marked,
+           never invented.
+  voice    Speech to text, offline on this computer (a Whisper model), then exactly what
+           'do' does with that text; voice never authorizes.
   source   A document's source file: its status, and deleting RUDRA's copy while the
-           knowledge and its provenance stay (Part 7; Phase 23).
+           knowledge and its provenance stay.
   interpret
            Natural-language interpretation: a request's structured intents and the
-           command it maps to, as data; nothing is run (Phase 13).
-  calculate
-           Exact, unit-aware calculation from a structured request - its formulas,
-           inputs and assumptions, and at most one admitted stored equation;
-           read-only, and knowledge.db is opened only for an admission (Phase 11).
+           command it maps to, as data; nothing is run.
   version  Print version information.
 
 Exit codes are derived from the failure category, so a script can tell a
 configuration mistake from a storage problem without parsing text.
 
 This layer only presents results. It performs no reasoning, no calculation and no
-knowledge work, and it must never become the place where such logic lives
-(Part 4 section 140).
+knowledge work, and it must never become the place where such logic lives.
 """
 
 from __future__ import annotations
@@ -81,7 +77,7 @@ from app.core.errors import (
     unexpected,
 )
 from app.core.services import StartupResult, start_application, stop_application
-from app.version import APP_FULL_NAME, APP_NAME, PHASE, VERSION
+from app.version import APP_FULL_NAME, APP_NAME, EDITION, VERSION
 
 
 class ExitCode(IntEnum):
@@ -110,8 +106,43 @@ _EXIT_BY_CATEGORY = {
 }
 
 
+#: How the source tree names itself in every hint ("python -m app extract ..."), and what the
+#: installed program is called instead.
+_SOURCE_PROGRAM = "python -m app"
+_INSTALLED_PROGRAM = "RUDRA-CLI.exe"
+
+
+class _Spoken:
+    """An output stream that names the program the way the person runs it.
+
+    The hints in RUDRA's reports are written once, for the source tree. In the installed program
+    there is no `python`, so each hint is said with the installed program's name instead.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        return self._stream.write(text.replace(_SOURCE_PROGRAM, _INSTALLED_PROGRAM))
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point. Returns the process exit code; never raises."""
+    if not getattr(sys, "frozen", False):
+        return _main(argv)
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = _Spoken(out), _Spoken(err)
+    try:
+        return _main(argv)
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def _main(argv: Sequence[str] | None) -> int:
+    _tolerate_unencodable_output()  # --help is printed by the parser, before any command runs
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -143,7 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app",
-        description=f"{APP_NAME} ({APP_FULL_NAME}) - {PHASE}",
+        description=f"{APP_NAME} ({APP_FULL_NAME}) {EDITION}",
     )
     parser.add_argument(
         "command",
@@ -151,7 +182,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="start",
         choices=(
             "start", "env", "config", "paths", "db", "extract", "classify", "lookup",
-            "review", "edition", "merge", "query", "index", "reason", "calculate", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "version",
+            "review", "edition", "merge", "query", "index", "reason", "calculate", "solve", "inventory", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "version",
         ),
         help="What to do. Defaults to 'start'.",
     )
@@ -168,6 +199,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "For 'query': an exact concept, knowledge-object, relationship or document id. "
             "For 'reason': the target - a concept id or an exact concept name. "
             "For 'calculate': the target symbol, e.g. I. "
+            "For 'solve': the quantity to calculate - a symbol, or a name your documents explain. "
+            "For 'inventory': nothing; filter with --knowledge-type and --in-document. "
             "For 'provenance': any stored item's identifier, e.g. K-00000001. "
             "For 'interpret': the request, as quoted text. "
             "For 'act': the action, e.g. OPEN_APPLICATION. "
@@ -184,16 +217,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--name",
         default=None,
         help=(
-            "For 'lookup' and 'query': an exact concept name, matched after the D-30 "
-            "normalisation (NFKC, casefold, whitespace collapse). Every concept "
-            "answering to it is shown; none is chosen."
+            "For 'lookup' and 'query': an exact concept name, matched ignoring capitals, accents "
+            "and extra spaces. Every concept answering to it is shown; none is chosen."
         ),
     )
     query = parser.add_argument_group(
         "query",
         "Exactly one mode: --name, an identifier, --document with --page, or --keyword. "
         "Filters may be repeated; different filters combine with AND, the values of one "
-        "filter with OR (ADR 0036 P9-23).",
+        "filter with OR.",
     )
     query.add_argument("--keyword", default=None, help="Keyword mode: one term, matched as a phrase.")
     query.add_argument("--prefix", action="store_true", help="Keyword mode: match the term's last word as a prefix.")
@@ -223,12 +255,12 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument("--exclude-superseded", action="store_true",
                        help="Leave out superseded objects (listed and labelled by default).")
     query.add_argument("--no-widen", action="store_true",
-                       help="Concept mode: no widening over stored equivalence data (D2).")
+                       help="Concept mode: no widening over stored equivalence data.")
     reason = parser.add_argument_group(
         "reason",
-        "A structured reasoning request (ADR 0040 P10-27): a target, or --forward. A node is "
+        "A structured reasoning request: a target, or --forward. A node is "
         "a concept id or an exact concept name. Only what the request supplies or admits is "
-        "available; stored knowledge is never available merely because it exists (OI-1).",
+        "available; stored knowledge is never available merely because it exists.",
     )
     reason.add_argument("--forward", action="store_true",
                         help="Forward mode: everything that follows from what the request makes available.")
@@ -243,27 +275,27 @@ def _build_parser() -> argparse.ArgumentParser:
                              "For 'calculate': SYMBOL=VALUE, labelled ASSUMPTION.")
     calculate = parser.add_argument_group(
         "calculate",
-        "A structured calculation request (ADRs 0041-0043): a target symbol, --formula, "
+        "A structured calculation request: a target symbol, --formula, "
         "--input SYMBOL=VALUE, --assume SYMBOL=VALUE, at most one --admit K-ID, and --scope. "
         "Exact rationals, SI units, no symbolic solving; results are PENDING verification and "
-        "never stored. 'reason' refuses --formula (Phase 11 Step 0 decision (a)).",
+        "never stored. Use 'solve' to let RUDRA choose the equations from your documents.",
     )
     calculate.add_argument("--formula", action="append", default=None, metavar="SYMBOL = EXPRESSION",
                            help="For 'calculate': a formula, its target alone on the left, every "
                                 "operator explicit (+ - * / ^, parentheses).")
     provenance = parser.add_argument_group(
         "provenance",
-        "'Where did you get this?' (ADR 0044): an identifier, or --answer with the JSON a "
+        "'Where did you get this?': an identifier, or --answer with the JSON a "
         "calculate or reason command printed. Read-only; nothing is invented or written.",
     )
-    act = parser.add_argument_group("act", "A parameterised action (ADR 0046); in Phase 14 a dry run.")
+    act = parser.add_argument_group("act", "A parameterised action; a dry run unless --execute is given.")
     act.add_argument("--param", action="append", default=None, metavar="NAME=VALUE",
                      help="For 'act' and 'procedure': one parameter, e.g. application=Notepad.")
     act.add_argument("--execute", action="store_true",
                      help="For 'act' and 'procedure': run live on this computer after the permission check.")
     act.add_argument("--confirm", action="store_true",
-                     help="For 'act' and 'do': confirm a MEDIUM-risk step (section 107); for 'procedure': "
-                          "confirm running a documented procedure live (section 109).")
+                     help="For 'act' and 'do': confirm a MEDIUM-risk step; for 'procedure': "
+                          "confirm running a documented procedure live.")
     act.add_argument("--dry-run", action="store_true",
                      help="For 'do' and 'procedure': run on the simulated computer; nothing changes.")
     provenance.add_argument("--answer", default=None, metavar="FILE",
@@ -282,7 +314,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--audio",
         default=None,
         metavar="FILE",
-        help="For 'voice': the WAV file to recognize, or with --say the new WAV file to write (Phase 20).",
+        help="For 'voice': the WAV file to recognize, or with --say the new WAV file to write.",
     )
     parser.add_argument(
         "--listen",
@@ -307,7 +339,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="URL",
         help=(
             "For 'research': authorize this one website (its host and directory) for this request; "
-            "the page is retrieved, recorded and labelled external (Phase 18)."
+            "the page is retrieved, recorded and labelled external."
         ),
     )
     parser.add_argument(
@@ -316,7 +348,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="APPLICATION",
         help=(
             "For 'extract': declare the document the manual of this application, and extract its "
-            "menus, commands, workflows, shortcuts, parameters, constraints and file formats (Phase 17)."
+            "menus, commands, workflows, shortcuts, parameters, constraints and file formats."
         ),
     )
     parser.add_argument(
@@ -384,7 +416,7 @@ def _cmd_start(started: StartupResult, args: argparse.Namespace) -> ExitCode:
                 {
                     "started": True,
                     "version": VERSION,
-                    "phase": PHASE,
+                    "edition": EDITION,
                     "project_root": str(context.paths.project_root),
                     "config_file": (
                         str(context.loaded_config.config_file)
@@ -402,7 +434,7 @@ def _cmd_start(started: StartupResult, args: argparse.Namespace) -> ExitCode:
         )
         return ExitCode.OK
 
-    print(f"{APP_NAME} {VERSION}  ({PHASE})")
+    print(f"{APP_NAME} {VERSION}  ({EDITION})")
     print(f"  Project root : {context.paths.project_root}")
     print(
         "  Configuration: "
@@ -431,12 +463,9 @@ def _cmd_start(started: StartupResult, args: argparse.Namespace) -> ExitCode:
                 print(f"          {item.recommendation}")
 
     print()
-    print("Startup complete. Available: PDF ingestion and knowledge extraction, queries,")
-    print("reasoning, calculation, provenance, permission-checked computer actions and")
-    print("procedures, application manuals, controlled Internet research, diagrams, voice,")
-    print("'ask' and a desktop window (python -m app.ui.gui).")
-    print("Several are only partially implemented; there is no OCR or language model.")
-    print("See docs/LIMITATIONS.md. Commands: python -m app --help.")
+    print("Startup complete. RUDRA is ready: add documents, ask questions, calculate, check sources,")
+    print("back up and restore your knowledge. Some features are only partly complete;")
+    print("docs/LIMITATIONS.md says which. Commands: --help.")
     return ExitCode.OK
 
 
@@ -522,7 +551,6 @@ def _cmd_paths(started: StartupResult, args: argparse.Namespace) -> ExitCode:
                         "path": str(spec.path),
                         "storage_class": str(spec.storage_class),
                         "purpose": spec.purpose,
-                        "first_used": spec.first_used,
                         "exists": spec.path.is_dir(),
                     }
                     for spec in specs
@@ -538,7 +566,7 @@ def _cmd_paths(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     print()
     for spec in specs:
         marker = "present" if spec.path.is_dir() else "MISSING"
-        print(f"{spec.key}  [{spec.storage_class}]  ({marker}, used from {spec.first_used})")
+        print(f"{spec.key}  [{spec.storage_class}]  ({marker})")
         print(f"  {spec.path}")
         print(f"  {spec.purpose}")
     return ExitCode.OK
@@ -771,16 +799,44 @@ def _cmd_extract(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     print(f"Equations  : {report.numeric_equations_skipped} numeric substitutions from worked "
           "solutions seen and not stored")
     if report.issues:
-        print("Issues     : recorded, not ignored (Part 2 section 60)")
+        print("Issues     : recorded, not ignored")
         for issue_type, count in report.issues.items():
             print(f"  {issue_type:<28}{count:>6}")
     print(f"Document status: {report.document_status_before} -> {report.document_status_after}"
-          "  (Phase 5 never writes PROCESSED; see ADR 0024)")
-    print("Ingestion  : not fully ingested - not indexed (Phase 9). PROCESSED describes parse")
-    print("             and extraction health only (ADR 0032, P8-5/P8-6).")
+          "  (extraction only ever lowers this, and only when it found a problem serious enough "
+          "to discard a claim; it never raises or reverses it)")
+    print("Search     : the keyword index is brought up to date by itself the next time you ask or search;")
+    print("             the window does it straight away when you add a document.")
     if manual is not None:
         _print_manual_stage(*manual)
     return ExitCode.OK
+
+
+def _ensure_search_index(started: StartupResult) -> str | None:
+    """Make the derived keyword index current, so what was just added can be searched.
+
+    The index is derived data: it holds no knowledge of its own and is rebuilt from
+    knowledge.db in a fraction of a second, so nobody should have to ask for it. Returns
+    None when the index is ready, or why it could not be made ready.
+    """
+    from app.query import build_index, verify_index
+    from app.query.results import IndexState
+    from app.storage import DatabaseRole, connect, database_path
+
+    path = database_path(started.context.paths, DatabaseRole.KNOWLEDGE)
+    index = database_path(started.context.paths, DatabaseRole.INDEX)
+    if not path.exists():
+        return "there is no knowledge base yet"
+    try:
+        connection = connect(path, role=DatabaseRole.KNOWLEDGE, read_only=True)
+        try:
+            if verify_index(connection, index).state is not IndexState.FRESH:
+                build_index(connection, index)
+        finally:
+            connection.close()
+    except RudraError as error:
+        return error.report.summary
+    return None
 
 
 def _print_stage15(report) -> None:
@@ -858,7 +914,7 @@ def _cmd_classify(started: StartupResult, args: argparse.Namespace) -> ExitCode:
         print("             The organisation below covers only the knowledge this run kept;")
         print("             what it discarded is absent from it.")
     if report.issue_counts:
-        print("Run issues : recorded by that extraction run (Part 2 section 60)")
+        print("Run issues : recorded by that extraction run")
         for issue_type, count in report.issue_counts.items():
             print(f"  {issue_type:<28}{count:>6}")
     else:
@@ -887,7 +943,7 @@ def _cmd_classify(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     print()
     _print_organisation(organisation)
     print()
-    print("Part 5 section 192 areas in Phase 6 (ADR 0026):")
+    print("Areas of knowledge:")
     for area, status in AREA_STATUS:
         print(f"  {area:<27}{status}")
     return ExitCode.OK
@@ -900,9 +956,10 @@ def _tolerate_unencodable_output() -> None:
     character a PDF yields (the acceptance document has U+FFFD in a concept name).
     Replacing such a character on screen changes nothing that is stored.
     """
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if reconfigure is not None:
-        reconfigure(errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
 
 
 def _edge_label(edge, names: dict[str, str]) -> str:
@@ -983,7 +1040,7 @@ def _print_organisation(organisation) -> None:
     """V2: every group, empty or not, each edge labelled EXPLICIT or INFERRED."""
     names = organisation.concept_names
     print("V2 Organisation - EXPLICIT: a source states it. INFERRED: RUDRA inferred it,")
-    print("   and the basis says from what. Phase 6 infers only related concepts.")
+    print("   and the basis says from what. Only related concepts are inferred.")
     for group, edges in organisation.groups:
         if not edges:
             print(f"  {group}: none stored among this run's concepts")
@@ -1131,7 +1188,7 @@ def _require_readable_schema(version: int, expected: int, path: Path) -> None:
         options = (
             "Migrate it explicitly with: python -m app db  (this writes to the database).",
             "For the live database, first make a fresh byte-identical, read-back-verified "
-            "off-SSD backup (D-15; ADR 0031, P7-8).",
+            "off-SSD backup.",
         )
     else:
         summary = "The knowledge database is newer than this build."
@@ -1497,7 +1554,7 @@ def _require_reviewable_schema(version: int, expected: int, path: Path) -> None:
         options = (
             "Migrate it explicitly with: python -m app db  (this writes to the database).",
             "For the live database, first make a fresh byte-identical, read-back-verified "
-            "off-SSD backup (D-15; ADR 0032, P8-9).",
+            "off-SSD backup.",
         )
     else:
         summary = "The knowledge database is newer than this build."
@@ -1578,7 +1635,7 @@ def _print_review(result: dict) -> None:
     if sources["superseded_into"]:
         print("             including the occurrences of "
               + ", ".join(sources["superseded_into"]) + ", superseded into it by merge")
-    print("             informational only: more sources is not more correct (section 78)")
+    print("             informational only: more sources is not more correct")
 
     print(f"Conflicts  : {len(result['conflicts'])}")
     for item in result["conflicts"]:
@@ -1747,7 +1804,7 @@ def _cmd_merge(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     if migration.applied:
         print(f"Database   : migrated {migration.version_before} -> {migration.version_after}"
               + (f"; backup {migration.backup_path}" if migration.backup_path else ""))
-    print("Merge      : exact duplicates stored before stage 15 (ADR 0033, P8-19)")
+    print("Merge      : exact duplicates stored before stage 15")
     print(f"Groups     : {len(report.groups)} exact-duplicate groups among ACTIVE knowledge")
     for group in report.groups[:20]:
         print(f"  {group[0]} canonical (smallest counter) <- " + ", ".join(group[1:]))
@@ -2138,7 +2195,7 @@ def _cmd_index(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     print(f"Marker     : {status.build_marker}")
     print(f"Entries    : {sum(count for _, count in status.entries)} ({entries}); pages {status.pages}; "
           f"{report.skipped_empty} stored row(s) with nothing to index")
-    print(f"Tokenizer  : {status.tokenizer}; D-30 normalisation version {status.normalization_version}; "
+    print(f"Tokenizer  : {status.tokenizer}; text normalisation version {status.normalization_version}; "
           f"index format {status.format_version}")
     print(f"Space      : estimated {report.estimate_bytes} bytes, {report.available_bytes} free; "
           f"written {report.size_bytes} bytes")
@@ -2549,6 +2606,233 @@ def _print_calculation(result) -> None:
     print(f"Rounding    : {versions.display_rule}")
     for note in result.notes:
         print(f"Note        : {note}")
+
+
+def _cmd_solve(started: StartupResult, args: argparse.Namespace) -> ExitCode:
+    """Calculate a quantity from the equations your documents state - RUDRA picks them.
+
+        python -m app solve I --input "V=10 V" --input "R=5 Ω"
+        python -m app solve "the output voltage" --input "Vin=12 V" --input "R1=10 Ω" --input "R2=20 Ω"
+
+    Name what you want (a symbol, or a name your documents explain, such as "voltage") and
+    what you know (--input NAME=VALUE, a number with at most one unit). RUDRA finds the
+    stored equations that connect them - one, or several in the order their values flow,
+    rearranged where an equation must be turned around - calculates exactly with SI units,
+    cross-checks other routes through the stored equations, and verifies the result with an
+    independent evaluator. When the documents do not establish an answer it says what is
+    missing; when stored equations disagree it shows each and chooses none.
+
+    Read-only: knowledge.db is opened with `read_only=True` and never migrated; nothing is
+    written. `--json` prints the whole result.
+
+    Exit codes: 0 calculated; 3 not determined (what is missing is named) or conflicting; 2
+    invalid request; 5 the database cannot be used as it is; 70 anything unexpected.
+    """
+    from app.calculation import CalculationScope, to_json
+    from app.solving import Given, SolveRequest, Status, solve
+    from app.storage import DatabaseRole, Repository, connect, database_path
+
+    _tolerate_unencodable_output()
+    refused = [flag for flag, name in _NOT_SOLVE_FLAGS if getattr(args, name) not in (None, False)]
+    if refused:
+        raise _solve_refusal(f"'solve' does not take {', '.join(refused)}.",
+                             "Give the quantity to calculate and what you know with --input NAME=VALUE.")
+    if args.target is None:
+        raise _solve_refusal("Name the quantity to calculate.", "None was given.")
+    givens = []
+    for item in args.input or ():
+        name, separator, value = item.partition("=")
+        if not separator or not name.strip() or not value.strip():
+            raise _solve_refusal(f"{item!r} is not in the form NAME=VALUE.",
+                                 "--input names a quantity and its value, for example R=5 Ω.")
+        givens.append(Given(name.strip(), value.strip()))
+    try:
+        scope = CalculationScope(args.scope.strip().upper().replace("-", "_"))
+    except ValueError:
+        raise _solve_refusal(f"{args.scope!r} is not a value --scope accepts.",
+                             "Accepted: my-books, authorized.") from None
+    path = database_path(started.context.paths, DatabaseRole.KNOWLEDGE)
+    connection = connect(path, role=DatabaseRole.KNOWLEDGE, read_only=True)
+    try:
+        result = solve(Repository(connection), SolveRequest(args.target, tuple(givens), scope))
+    finally:
+        connection.close()
+    if args.json:
+        print(to_json(result))
+    else:
+        _print_solution(result)
+    return ExitCode.OK if result.status is Status.CALCULATED else ExitCode.MISSING_INFORMATION
+
+
+_SOLVE_EXAMPLES = (
+    'python -m app solve I --input "V=10 V" --input "R=5 Ω"',
+    'python -m app solve "the voltage" --input "I=2 A" --input "R=5 Ω" --json',
+)
+
+#: Flags of other commands `solve` refuses rather than ignores.
+_NOT_SOLVE_FLAGS = (*_NOT_REASON_FLAGS, ("--forward", "forward"), ("--admit", "admit"), ("--assume", "assume"))
+
+
+def _solve_refusal(summary: str, reason: str) -> InvalidInputError:
+    return InvalidInputError.of(summary, reason, stage="cli.solve", data_changed=False, retry_safe=True,
+                                next_options=_SOLVE_EXAMPLES)
+
+
+def _print_solution(result) -> None:
+    """The text form of a solved calculation: what was asked, the route, the result, the checks."""
+    target = result.target
+    named = f" ({target.name})" if target.name else ""
+    print(f"Asked       : {target.asked}" + (f" = {target.symbol}{named}" if target.symbol else ""))
+    for given in result.givens:
+        symbol = given.symbol or "?"
+        print(f"Known       : {given.asked} = {given.value}" + ("" if symbol == given.asked else f" (as {symbol})")
+              + ("" if given.used or not given.symbol else " - not needed"))
+    print(f"Answer      : {result.status.value} - {result.message}")
+    for step in result.steps:
+        how = "turned around from a stored equation" if step.rearranged else "stored equation"
+        print(f"Step {step.number:<7}: {step.formula}  ({how} {step.knowledge_id}: \"{_one_line(step.stored_text)}\")")
+        print(f"              {step.substitution} = {step.result.text}")
+        for row in step.evidence[:1]:
+            print(f"              source {_evidence_line(row)}")
+    for route in result.routes:
+        shown = "agrees" if route.agrees else ("no value" if route.value is None else "differs")
+        value = route.value.text if route.value else route.problem
+        print(f"Route       : {' ; '.join(route.equations)} -> {value} ({shown})")
+    for gap in result.missing:
+        needs = ", ".join(gap.needs) or "nothing more"
+        print(f"Missing     : {gap.formula} ({gap.knowledge_id}) needs {needs}")
+    for hint in result.suggestions:
+        print(f"Spelling    : {hint}")
+    if result.verification != "NOT_RUN":
+        print(f"Verification: {result.verification} - {result.verification_detail}")
+    for line in result.uncertain:
+        print(f"Uncertain   : {line}")
+    for note in result.notes:
+        print(f"Note        : {note}")
+    library = result.library
+    print(f"Equations   : {library.usable} of {library.equations} stored equation(s) can be calculated with; "
+          f"{library.unreadable} are not plain formulas; {library.withheld} withheld")
+
+
+def _cmd_inventory(started: StartupResult, args: argparse.Namespace) -> ExitCode:
+    """What RUDRA knows: each document's result, and the knowledge itself, as a person reads it.
+
+        python -m app inventory
+        python -m app inventory --knowledge-type EQUATION
+        python -m app inventory --knowledge-type PROBLEM --in-document DOC-00000001 --json
+
+    Without a filter: for every document what was stored, what was linked to knowledge
+    other evidence already supported, and what was found but *not* stored (each kind of
+    problem in plain words with examples), and how much of the stored mathematics a
+    calculation can use. With --knowledge-type (repeatable): the items themselves -
+    CONCEPT, DEFINITION, EQUATION, VARIABLE, UNIT, PROPERTY, RULE, RELATIONSHIP, EXAMPLE,
+    PROCEDURE, or PROBLEM for what was not stored - each with its document, page, quoted
+    text and how sure RUDRA is of it. --in-document limits the items to one document.
+
+    Read-only: knowledge.db is opened with `read_only=True` and never migrated. Exit codes:
+    0 shown; 3 there is no knowledge base yet; 2 invalid request; 5 the database cannot be used
+    as it is; 70 anything unexpected.
+    """
+    from app.calculation import CalculationScope
+    from app.inventory import KINDS, build, to_json
+    from app.storage import DatabaseRole, Repository, connect, database_path
+
+    _tolerate_unencodable_output()
+    refused = [flag for flag, name in _NOT_INVENTORY_FLAGS if getattr(args, name) not in (None, False)]
+    if refused or args.target is not None:
+        raise _inventory_refusal(f"'inventory' does not take {', '.join(refused) or 'a target'}.",
+                                 "Filter with --knowledge-type and --in-document.")
+    plural = {label.casefold(): kind for kind, label in KINDS.items()}
+    kinds = set()
+    for value in args.knowledge_type or ():
+        key = value.strip().upper().replace("-", "_")
+        key = plural.get(value.strip().casefold(), key)
+        if key not in KINDS:
+            raise _inventory_refusal(f"{value!r} is not a kind of knowledge.", "Accepted: " + ", ".join(KINDS) + ".")
+        kinds.add(key)
+    try:
+        scope = CalculationScope(args.scope.strip().upper().replace("-", "_"))
+    except ValueError:
+        raise _inventory_refusal(f"{args.scope!r} is not a value --scope accepts.",
+                                 "Accepted: my-books, authorized.") from None
+    path = database_path(started.context.paths, DatabaseRole.KNOWLEDGE)
+    if not path.exists():
+        print(to_json_empty() if args.json else "Knowledge   : nothing yet - add a document first.")
+        return ExitCode.MISSING_INFORMATION
+    connection = connect(path, role=DatabaseRole.KNOWLEDGE, read_only=True)
+    try:
+        inventory = build(Repository(connection), kinds=frozenset(kinds),
+                          document_id=(args.in_document or [None])[0], scope=scope)
+    finally:
+        connection.close()
+    print(to_json(inventory) if args.json else _inventory_text(inventory))
+    return ExitCode.OK
+
+
+def to_json_empty() -> str:
+    return json.dumps({"totals": {"documents": 0, "counts": {}, "uncertain": 0, "conflicts": 0}, "documents": [],
+                       "items": [], "kinds": [], "truncated": False, "notes": []})
+
+
+_INVENTORY_EXAMPLES = (
+    "python -m app inventory",
+    "python -m app inventory --knowledge-type EQUATION",
+    "python -m app inventory --knowledge-type PROBLEM --json",
+)
+
+#: Flags of other commands `inventory` refuses rather than ignores.
+_NOT_INVENTORY_FLAGS = tuple((flag, name) for flag, name in _NOT_REASON_FLAGS
+                             if name not in ("knowledge_type", "in_document")) + (
+    ("--forward", "forward"), ("--input", "input"), ("--admit", "admit"), ("--assume", "assume"))
+
+
+def _inventory_refusal(summary: str, reason: str) -> InvalidInputError:
+    return InvalidInputError.of(summary, reason, stage="cli.inventory", data_changed=False, retry_safe=True,
+                                next_options=_INVENTORY_EXAMPLES)
+
+
+def _inventory_text(inventory) -> str:
+    from app.inventory import KINDS
+
+    lines = []
+    counts = inventory.totals.counts
+    listing = ", ".join(f"{counts[kind]} {KINDS[kind].lower()}" for kind in KINDS if counts.get(kind))
+    lines.append(f"Knowledge   : {inventory.totals.documents} document(s) - {listing or 'nothing stored yet'}")
+    calc = inventory.calculation
+    if calc.equations:
+        lines.append(f"Calculation : {calc.usable} of {calc.equations} stored equation(s) can be calculated with")
+        for reason, count in calc.reasons:
+            lines.append(f"              {count} cannot: {reason}")
+    if inventory.totals.uncertain:
+        lines.append(f"Uncertain   : {inventory.totals.uncertain} item(s) are marked uncertain; answers say so")
+    if inventory.totals.conflicts:
+        lines.append(f"Conflicts   : {inventory.totals.conflicts} stored conflict(s) between statements")
+    for document in inventory.documents:
+        pages = f", {document.pages} pages" if document.pages else ""
+        lines.append(f"Document    : {document.id} \"{document.name}\" ({document.source_type}{pages}) - "
+                     f"{document.status_words}")
+        stored = ", ".join(f"{n} {KINDS.get(kind, kind).lower()}" for kind, n in document.stored.items())
+        lines.append(f"  Stored    : {stored or 'nothing'}")
+        if document.linked:
+            lines.append(f"  Linked    : {document.linked} item(s) were already supported by other evidence")
+        if document.possible_duplicates:
+            lines.append(f"  Similar   : {document.possible_duplicates} similar statement(s) kept apart, not merged")
+        for group in document.problems:
+            label = "Not stored" if group.not_stored else "Warning"
+            lines.append(f"  {label:<10}: {group.count} - {group.meaning}")
+            for page, excerpt in group.examples[:2]:
+                lines.append(f"              e.g. {'p.' + str(page) + ': ' if page else ''}{excerpt}")
+    for item in inventory.items:
+        where = f" [{item.document} p.{item.page}]" if item.document and item.page else (
+            f" [{item.document}]" if item.document else "")
+        flag = f" ({item.doubt})" if item.doubt else ""
+        calc_note = f" - {item.calculation}" if item.calculation and item.calculation != "usable" else ""
+        lines.append(f"{KINDS[item.kind][:-1] if KINDS[item.kind].endswith('s') else KINDS[item.kind]:<12}: "
+                     f"{item.id} {item.title}{where}{flag}{calc_note}")
+    if inventory.truncated:
+        lines.append("Note        : the list was cut short; filter with --knowledge-type or --in-document.")
+    lines.extend(f"Note        : {note}" for note in inventory.notes)
+    return "\n".join(lines)
 
 
 def _cmd_provenance(started: StartupResult, args: argparse.Namespace) -> ExitCode:
@@ -3696,9 +3980,10 @@ def _cmd_voice(started: StartupResult, args: argparse.Namespace) -> ExitCode:
         python -m app voice --listen
         python -m app voice --say "Open Calculator." --audio new.wav
 
-    The speech is recognized by Windows' own engine with RUDRA's command grammar (its verbs
-    and the registered applications) and free dictation as the fallback; the transcript,
-    the grammar that matched and the engine's confidence are shown. The transcript then
+    The speech is recognized offline, on this computer, by a Whisper model (run by
+    whisper.cpp); RUDRA's own words - its verbs and the registered applications - are given
+    to it as context. The transcript and the model's confidence in its words are shown, and a
+    transcript the model was unsure of says so. The transcript then
     goes through the same pipeline as typed text - interpret, plan, validate, permission,
     execute, verify, report. Voice never authorizes: a MEDIUM-risk step still needs the
     typed --confirm, and a spoken "confirm" is only text. --listen opens the microphone for
@@ -3710,7 +3995,7 @@ def _cmd_voice(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     speech engine cannot be used; 70 anything unexpected.
     """
     from app.orchestration import Outcome, to_json
-    from app.voice import SpeechUnavailable, listen, recognize_file, synthesize
+    from app.voice import SpeechUnavailable, listen, recognize_file, synthesize, words
 
     _tolerate_unencodable_output()
     given = [flag for flag, name in _NOT_VOICE_FLAGS if getattr(args, name) not in (None, False)]
@@ -3737,7 +4022,8 @@ def _cmd_voice(started: StartupResult, args: argparse.Namespace) -> ExitCode:
             else:
                 print(f"Speech      : wrote {written} ({written.stat().st_size} bytes)")
             return ExitCode.OK
-        transcript = listen() if args.listen else recognize_file(Path(args.audio))
+        hints = words.load(started.context.paths.config_dir)
+        transcript = listen(hints=hints) if args.listen else recognize_file(Path(args.audio), hints)
     except SpeechUnavailable as failure:
         if args.json:
             print(to_json({"status": "SPEECH_UNAVAILABLE", "reason": failure.reason}))
@@ -3779,10 +4065,9 @@ def _voice_refusal(summary: str, reason: str) -> InvalidInputError:
 
 def _print_speech(transcript) -> None:
     confidence = "not given" if transcript.confidence is None else f"{transcript.confidence:.2f}"
-    grammar = {"commands": "RUDRA's command grammar", "dictation": "free dictation (less reliable)"}.get(
-        transcript.grammar, "none")
+    unsure = " (the model was unsure of its words: check them)" if getattr(transcript, "uncertain", False) else ""
     print(f"Speech      : {transcript.audio}")
-    print(f'Transcript  : "{transcript.text}" - {grammar}; confidence {confidence}; {transcript.recognizer}')
+    print(f'Transcript  : "{transcript.text}" - confidence {confidence}{unsure}; {transcript.recognizer}')
 
 
 def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
@@ -3826,10 +4111,11 @@ def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
     if args.target is not None:
         text = args.target
     else:
-        from app.voice import SpeechUnavailable, listen, recognize_file
+        from app.voice import SpeechUnavailable, listen, recognize_file, words
 
         try:
-            speech = listen() if args.listen else recognize_file(Path(args.audio))
+            hints = words.load(started.context.paths.config_dir)
+            speech = listen(hints=hints) if args.listen else recognize_file(Path(args.audio), hints)
         except SpeechUnavailable as failure:
             print(to_json({"status": "SPEECH_UNAVAILABLE", "reason": failure.reason}) if args.json
                   else f"Answer      : SPEECH_UNAVAILABLE - {failure.reason}")
@@ -3840,7 +4126,8 @@ def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
             return ExitCode.MISSING_INFORMATION
         text = speech.text
     builders = {"query": answers.from_query, "reason": answers.from_reasoning, "calculate": answers.from_calculation,
-                "provenance": answers.from_provenance, "diagram": answers.from_diagram}
+                "solve": answers.from_solution, "provenance": answers.from_provenance,
+                "diagram": answers.from_diagram}
     interpretation = interpret(text)
     interpreted = interpretation.status is InterpretationStatus.INTERPRETED
     parts = []
@@ -3850,7 +4137,7 @@ def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
         if intent.intent_type == "WEB_SEARCH":  # never run from here: it needs the user's site (ADR 0050)
             parts.append(answers.not_run(number, label, intent.intent_type,
                                          "An Internet search needs your authorization of one website for the "
-                                         'request: python -m app research "QUESTION" --site URL (ADR 0050).'))
+                                         'request: python -m app research "QUESTION" --site URL.'))
             continue
         if intent.intent_type == "IMAGE_REQUEST" and intent.target:  # the diagram path (ADR 0051)
             argv = ["diagram", f"Draw a diagram of {intent.target}"]
@@ -3872,6 +4159,8 @@ def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
                                          "This kind of request is not answered from ask."))
             continue
         argv = [*intent.command]
+        if argv[:2] == ["query", "--keyword"]:
+            _ensure_search_index(started)  # asking brings the derived index up to date by itself
         if argv[0] != "calculate" and args.scope.strip().lower() != "my-books":
             argv += ["--scope", args.scope]
         answer, failure = _ask_run(started, argv)
@@ -3879,7 +4168,13 @@ def _cmd_ask(started: StartupResult, args: argparse.Namespace) -> ExitCode:
             parts.append(answers.not_run(number, label, intent.intent_type, failure, status="NEEDS_INFORMATION"))
             continue
         if builder is answers.from_query:
-            parts.append(builder(number, label, intent.intent_type, argv, answer, intent.requested_output))
+            part = builder(number, label, intent.intent_type, argv, answer, intent.requested_output)
+            if part.status == "UNKNOWN" and intent.intent_type == "QUERY_CONCEPT" and intent.target:
+                part = _with_mentions(started, args, part, intent.target, intent.requested_output)
+            elif part.status == "UNKNOWN" and intent.intent_type == "KEYWORD_SEARCH" and \
+                    (answer.get("keyword") or {}).get("pages"):
+                part = answers.from_mentions(part, answer, intent.target or "")  # the pages' own words
+            parts.append(part)
         else:
             parts.append(builder(number, label, intent.intent_type, argv, answer))
     if action_numbers:
@@ -3923,11 +4218,31 @@ def _ask_run(started: StartupResult, argv: list[str]) -> tuple[dict | None, str 
         with contextlib.redirect_stdout(buffer):
             _COMMANDS[args.command](started, args)
     except RudraError as error:
+        if error.report.stage == "storage.connect.read_only":
+            return None, "RUDRA has no knowledge yet. Add a document first (the Add document page), then ask."
         return None, f"{error.report.summary} {error.report.reason}"
     text = buffer.getvalue().strip()
     if not text:
         return None, "the command gave no answer"
     return json.loads(text), None
+
+
+def _with_mentions(started: StartupResult, args: argparse.Namespace, unknown, name: str, output: str | None = None):
+    """A question about a concept the documents never define in a stored form still deserves
+    what they *do* say about it: the stored statements that mention the words, shown as
+    mentions (never as a definition). The derived index is made current first, since nobody
+    should have to ask for it. If nothing mentions the term either, the answer stays Unknown."""
+    from app.orchestration import answers
+
+    if _ensure_search_index(started) is not None:
+        return unknown
+    scope = [] if args.scope.strip().lower() == "my-books" else ["--scope", args.scope]
+    for extra in ([], ["--prefix"]):
+        answer, failure = _ask_run(started, ["query", "--keyword", name, *extra, *scope])
+        keyword = (answer or {}).get("keyword") or {}
+        if failure is None and (keyword.get("knowledge") or keyword.get("concepts") or keyword.get("pages")):
+            return answers.from_mentions(unknown, answer, name, output)
+    return unknown
 
 
 def _ask_audit(text: str, parts) -> None:
@@ -4095,7 +4410,7 @@ def _cmd_version(started: StartupResult, args: argparse.Namespace) -> ExitCode:
                     "name": APP_NAME,
                     "full_name": APP_FULL_NAME,
                     "version": VERSION,
-                    "phase": PHASE,
+                    "edition": EDITION,
                     "python": sys.version.split()[0],
                 },
                 indent=2,
@@ -4104,7 +4419,7 @@ def _cmd_version(started: StartupResult, args: argparse.Namespace) -> ExitCode:
         return ExitCode.OK
     print(f"{APP_NAME} {VERSION}")
     print(APP_FULL_NAME)
-    print(PHASE)
+    print(EDITION)
     print(f"Python {sys.version.split()[0]}")
     return ExitCode.OK
 
@@ -4125,6 +4440,8 @@ _COMMANDS = {
     "index": _cmd_index,
     "reason": _cmd_reason,
     "calculate": _cmd_calculate,
+    "solve": _cmd_solve,
+    "inventory": _cmd_inventory,
     "provenance": _cmd_provenance,
     "interpret": _cmd_interpret,
     "act": _cmd_act,

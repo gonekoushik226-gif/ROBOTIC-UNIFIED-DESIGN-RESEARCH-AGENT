@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from app.version import EDITION
 from tests.conftest import PROJECT_ROOT
 
 
@@ -162,7 +163,7 @@ def test_version_command(project_root: Path):
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["version"]
-    assert "Phase 23" in payload["phase"]
+    assert payload["edition"] == EDITION
 
 
 def test_bad_configuration_fails_with_an_actionable_message(project_root: Path):
@@ -223,11 +224,10 @@ def test_startup_states_what_exists_and_what_does_not(started):
     unchanged - what exists is stated rather than hidden, what does not is stated
     too, and the full account is pointed to rather than implied.
     """
-    assert "Available: PDF ingestion and knowledge extraction" in started.stdout
-    assert "DEVELOPMENT_STATE" not in started.stdout
-    assert "a desktop window (python -m app.ui.gui)" in started.stdout
-    assert "Several are only partially implemented" in started.stdout
-    assert "no OCR or language model" in started.stdout
+    assert "RUDRA is ready: add documents, ask questions, calculate, check sources," in started.stdout
+    assert "DEVELOPMENT_STATE" not in started.stdout and "Phase" not in started.stdout
+    assert "Some features are only partly complete" in started.stdout and "docs/LIMITATIONS.md" in started.stdout
+    assert "no OCR" not in started.stdout  # OCR exists; the old line said otherwise
     assert "docs/LIMITATIONS.md" in started.stdout
     assert "no reasoning or action subsystem" not in started.stdout
     assert "GUI" not in started.stdout.split("Startup complete.")[1]

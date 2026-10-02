@@ -367,7 +367,7 @@ def test_the_window_offers_export_and_import(tmp_path, source, capsys):
         assert page.export()
         wait()
         (made,) = tmp_path.glob("RUDRA-knowledge-*.rudrabackup")
-        assert "Knowledge base exported." in window.full.output.text_content()
+        assert "Your knowledge is backed up." in window.full.output.text_content()
 
         other = RudraWindow(root, tmp_path / "second", full=True, autostart=False)
         importer = other.full.pages["backup"]
@@ -379,7 +379,7 @@ def test_the_window_offers_export_and_import(tmp_path, source, capsys):
         wait()
         wait()
         assert questions and "Restore this backup?" in questions[0]
-        assert "Knowledge base restored and verified." in other.full.output.text_content()
+        assert "Your knowledge is restored and checked." in other.full.output.text_content()
 
         # An existing knowledge base: the question says it will be replaced; declining changes nothing.
         questions.clear()

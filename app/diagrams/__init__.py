@@ -26,7 +26,7 @@ from app.diagrams.specification import (
 from app.query import SourceScope
 
 NOT_DRAWABLE = ("RUDRA draws structure diagrams from stored relationships; a schematic, a chart or a picture "
-                "cannot be built from what is stored without inventing it (ADR 0051 P19-1).")
+                "cannot be built from what is stored without inventing it.")
 
 
 @dataclass(frozen=True, slots=True)

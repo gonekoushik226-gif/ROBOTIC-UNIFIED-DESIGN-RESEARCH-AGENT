@@ -114,7 +114,7 @@ FIELDS: Final[tuple[FieldSpec, ...]] = (
         int,
         5 * 1024 * 1024,
         "Size at which a log file is rotated. Keeps logs from becoming an "
-        "uncontrolled storage dump (Part 4 section 133).",
+        "uncontrolled storage dump.",
         minimum=4096,
     ),
     FieldSpec(

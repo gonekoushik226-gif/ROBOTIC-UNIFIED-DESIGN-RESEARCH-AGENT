@@ -28,6 +28,7 @@ from dataclasses import dataclass, replace
 from app.core.errors import InvalidInputError
 from app.models.enums import RiskLevel
 from app.models.identifiers import is_valid_id
+from app.nlu import quantities
 from app.nlu.lexicon import EXAMPLES, KNOWLEDGE_REASONING, RISK, resolve_application
 from app.nlu.results import (
     ActionRequest,
@@ -139,7 +140,7 @@ def _query(rule: str, target_text: str, output: str | None, cls: str = "KNOWLEDG
     notes = ()
     if output == "equations":
         notes = ("Equations are shown only when a stored relationship links them to the concept; "
-                 "extraction links none (Phase 9, D1).",)
+                 "extraction links none.",)
     return _intent("QUERY_CONCEPT", (cls,), rule, target=name, source_scope=scope, requested_output=output,
                    entities=(Entity(EntityType.CONCEPT, text, name),), command=command, notes=notes,
                    constraints=() if scope is None else (f"source scope {scope}",))
@@ -154,22 +155,34 @@ def _as_assignment(piece: str) -> str:
     return f"{match['left'].strip()} = {match['right'].strip()}" if match else piece
 
 
+def _pieces(given: str) -> list[str]:
+    """What a "given" clause states, one item at a time: "V = 10 V, R is 5 ohms and Z = X / Y"."""
+    return [p.strip() for p in re.split(r"\s*(?:,|;|\band\b)\s*", given) if p.strip()]
+
+
 def _calculation(rule: str, target_text: str, given: str | None) -> StructuredIntent:
-    """A calculation request: complete when the text states a symbol, formulas and values."""
+    """A calculation request.
+
+    With formulas stated, it is the exact `calculate` command (the formulas are the user's).
+    With only values - "calculate the current when V = 10 V and R = 5 ohms" - RUDRA chooses
+    the equations itself from the user's documents: the `solve` command. With neither, the
+    request is incomplete and says what it needs.
+    """
     target_text = target_text.strip()
     formulas: list[str] = []
     inputs: list[str] = []
     unreadable: list[str] = []
     if given:
-        for piece in (p.strip() for p in re.split(r"\s*(?:,|;|\band\b)\s*", given) if p.strip()):
+        for piece in _pieces(given):
             left, sep, right = _as_assignment(piece).partition("=")
             left, right = left.strip(), right.strip()
-            if not sep or not _SYMBOL.fullmatch(left) or not right:
-                unreadable.append(piece)
-            elif _VALUE.fullmatch(right):
-                inputs.append(f"{left}={right}")
-            else:
+            said = quantities.split_quantity(piece)
+            if sep and _SYMBOL.fullmatch(left) and right and not _VALUE.fullmatch(right) and quantities.normalize_value(right) is None:
                 formulas.append(f"{left} = {right}")
+            elif said is not None:
+                inputs.append(f"{said[0]}={said[1]}")
+            else:
+                unreadable.append(piece)
     elif "=" in target_text:
         left, _, right = target_text.partition("=")
         if _SYMBOL.fullmatch(left.strip()) and right.strip():
@@ -190,25 +203,33 @@ def _calculation(rule: str, target_text: str, given: str | None) -> StructuredIn
     entities += [Entity(EntityType.FORMULA, f, f) for f in formulas]
     entities += [Entity(EntityType.VALUE, i, i) for i in inputs]
     parameters = tuple(("formula", f) for f in formulas) + tuple(("input", i) for i in inputs)
+    classes = ("CALCULATION", KNOWLEDGE_REASONING)
+    if not formulas and inputs and not unreadable and name:
+        command = ["solve", name]
+        for value in inputs:
+            command += ["--input", value]
+        return _intent("CALCULATE", classes, rule, target=name, entities=tuple(entities), parameters=parameters,
+                       requested_output="value", command=tuple(command),
+                       notes=("No formula was given: RUDRA chooses the equations from the user's documents "
+                              "(the solve command), and says so when they do not establish an answer.",))
     missing = []
     if unreadable:
-        missing.append("each given item as SYMBOL = value or SYMBOL = formula; could not read: "
+        missing.append("each given item as QUANTITY = value (for example R = 5 ohms); could not read: "
                        + "; ".join(unreadable))
-    if symbol is None:
+    if formulas and symbol is None:
         missing.append(f"the symbol that stands for '{name}' in the formulas")
-    if not formulas:
-        missing.append("the formulas (RUDRA does not choose a formula for you)")
-    if symbol is not None and not formulas and not inputs:
+    if not formulas and not inputs:
+        missing.append("the values you know (for example: V = 10 V and R = 5 ohms)")
+    if formulas and not inputs and symbol is not None:
         missing.append("the input values")
-    elif symbol is None and not inputs:
+    elif formulas and symbol is None and not inputs:
         missing.append("the input values")
-    classes = ("CALCULATION", KNOWLEDGE_REASONING)
     if missing:
         routes = () if symbol else (("reason", name),)
         return _intent("CALCULATE", classes, rule, status=InterpretationStatus.INCOMPLETE, target=name,
                        entities=tuple(entities), parameters=parameters, missing=tuple(missing),
                        requested_output="value", routes=routes,
-                       notes=("The language layer does not reason or calculate (section 207). The route "
+                       notes=("The language layer does not reason or calculate. The route "
                               "below asks what the quantity requires from stored knowledge; it is a route, "
                               "not an answer.",) if routes else ())
     command = ["calculate", symbol]
@@ -233,7 +254,7 @@ def _application(rule: str, intent_type: str, said: str) -> StructuredIntent | N
     known = name is not None
     application = name or said
     notes = () if known else (f"'{said}' is not in RUDRA's application name table; the application "
-                              "registry (Phase 14) resolves or refuses it.",)
+                              "registry resolves or refuses it.",)
     return _intent(intent_type, ("APPLICATION_CONTROL",), rule, target=application,
                    entities=(Entity(EntityType.APPLICATION, said, application, known=known),),
                    parameters=(("application", application),), notes=notes,
@@ -257,7 +278,7 @@ def _reference(rule: str, verb: str, reference: str) -> StructuredIntent:
                    target=reference, entities=(Entity(EntityType.REFERENCE, reference, reference),),
                    parameters=(("verb", verb.casefold()),),
                    missing=(f"which {reference.split()[-1]} to {verb.casefold()}: name it; RUDRA keeps no memory of "
-                            "earlier requests and never picks one for you (section 97)",))
+                            "earlier requests and never picks one for you",))
 
 
 def _source(rule: str, reference: str) -> StructuredIntent:
@@ -268,7 +289,7 @@ def _source(rule: str, reference: str) -> StructuredIntent:
                        command=("provenance", reference), requested_output="provenance")
     if _is_reference(reference):
         missing = ("the item's identifier (provenance ID), or the answer's JSON file (provenance --answer "
-                   "FILE); 'this' is not remembered (ADR 0044 P12-2)",)
+                   "FILE); 'this' is not remembered",)
         return _intent("SOURCE_QUERY", ("SOURCE_QUERY",), rule, status=InterpretationStatus.INCOMPLETE,
                        target=reference, entities=(Entity(EntityType.REFERENCE, reference, reference),),
                        missing=missing, requested_output="provenance")
@@ -337,8 +358,14 @@ RULES: tuple[Rule, ...] = (
     _r("reference.unresolved", 3,
        r"^(?P<verb>open|close|delete|remove|show|save|use|run|start|launch|copy|move|rename) (?P<ref>it|this|that|them|(?:the|this|that|my) (?:project|file|document|folder|application|app|program|window))$",
        lambda m: _reference("reference.unresolved", m["verb"], m["ref"])),
-    _r("calculate.what_is_given", 3, r"^what (?:is|are) (?P<target>.+?),? (?:given|if|when|where|with) (?P<given>.*=.*)$",
-       lambda m: _calculation("calculate.what_is_given", m["target"], m["given"])),
+    _r("calculate.what_is_given", 3,
+       r"^what (?:is|are|would be|will be) (?P<target>.+?),? (?:given|if|when|where|with|for|at|assuming|knowing) "
+       r"(?P<given>.+)$",
+       lambda m: _calculation_if_valued("calculate.what_is_given", m["target"], m["given"])),
+    _r("calculate.given_first", 3,
+       r"^(?:if|given|with|when|assuming|knowing|suppose|for)\s+(?P<given>.+?),\s*(?:then\s+)?"
+       r"(?:calculate|compute|find|determine|evaluate|work out|what is|what's|what are|what would be)\s+(?P<target>.+)$",
+       lambda m: _calculation_if_valued("calculate.given_first", m["target"], m["given"])),
     # --- verb commands (2)
     _r("calculate.verb", 2, r"^(?:calculate|compute|evaluate|determine|work out|find) (?:the value of )?(?P<rest>.+)$",
        lambda m: _calculate_verb(m["rest"])),
@@ -413,22 +440,21 @@ def _keyword(term: str) -> StructuredIntent:
     term = _unquote(term)
     return _intent("KEYWORD_SEARCH", ("DOCUMENT_QUERY",), "query.keyword", target=term,
                    entities=(Entity(EntityType.SEARCH_TERM, term, term),), command=("query", "--keyword", term),
-                   notes=("Keyword search reads the derived index; build it first with `python -m app index`.",))
+                   notes=("Keyword search reads RUDRA's search index, which is brought up to date automatically.",))
 
 
 def _web(query: str) -> StructuredIntent:
     return _intent("WEB_SEARCH", ("WEB_SEARCH",), "web.search", target=query,
                    entities=(Entity(EntityType.SEARCH_TERM, query, query),), parameters=(("query", query),),
                    action=ActionRequest("SEARCH_WEB", (("query", query),)),
-                   notes=("Internet access needs the user's authorisation and a source scope "
-                          "(sections 124-125); it is Phase 18.",))
+                   notes=("Internet access needs the user's authorisation of one website for the request.",))
 
 
 def _image(subject: str) -> StructuredIntent:
     name = _name(subject)
     return _intent("IMAGE_REQUEST", ("IMAGE_REQUEST",), "image.request", target=name,
                    entities=(Entity(EntityType.CONCEPT, subject, name),), parameters=(("subject", name),),
-                   notes=("A diagram is drawn from structured stored knowledge, never invented (Phase 19).",))
+                   notes=("A diagram is drawn from structured stored knowledge, never invented.",))
 
 
 def _project(name: str | None, application: str | None) -> StructuredIntent:
@@ -449,8 +475,8 @@ def _project(name: str | None, application: str | None) -> StructuredIntent:
     return _intent("CREATE_PROJECT", ("PROCEDURE_EXECUTION",), "procedure.create_project", target=name,
                    entities=tuple(entities), parameters=tuple(parameters),
                    action=ActionRequest("CREATE_PROJECT", tuple(parameters)),
-                   notes=("Carried out only by a documented procedure (Phases 16-17); a guessed workflow "
-                          "is never presented as documented (section 111).",))
+                   notes=("Carried out only by a documented procedure; a guessed workflow "
+                          "is never presented as documented.",))
 
 
 def _calculate_verb(rest: str) -> StructuredIntent | None:
@@ -458,10 +484,21 @@ def _calculate_verb(rest: str) -> StructuredIntent | None:
         return None
     # The given clause need not itself contain "=": "if R1 is 10 ohms" is as explicit as
     # "if R1 = 10 ohms" (_as_assignment reads it the same way, piece by piece).
-    split = re.match(r"^(?P<target>.+?)\s*,?\s+(?:given|where|with|if|using|when)\s+(?P<given>.+)$", rest, re.IGNORECASE)
+    split = re.match(r"^(?P<target>.+?)\s*,?\s+(?:given|where|with|if|using|when|assuming|knowing|provided)\s+"
+                     r"(?P<given>.+)$", rest, re.IGNORECASE)
+    if split is None:  # "for" and "at" also introduce values, but only when the rest holds one
+        split = re.match(r"^(?P<target>.+?)\s*,?\s+(?:for|at)\s+(?P<given>.*\d.*)$", rest, re.IGNORECASE)
     if split:
         return _calculation("calculate.verb", split["target"], split["given"])
     return _calculation("calculate.verb", rest, None)
+
+
+def _calculation_if_valued(rule: str, target_text: str, given: str) -> StructuredIntent | None:
+    """A question such as "What is the current when V = 10 V and R = 5 ohms?" is a calculation only
+    when what follows states a value; "What is resistance when it is hot?" is not."""
+    if not re.search(r"\d", given):
+        return None
+    return _calculation(rule, target_text, given)
 
 
 def _concept_question(rule: str, target: str, output: str, cls: str = "KNOWLEDGE_QUERY") -> StructuredIntent:
@@ -583,7 +620,7 @@ def interpret(text: str) -> Interpretation:
         grammar=GRAMMAR_NAME,
         grammar_version=GRAMMAR_VERSION,
         examples=() if numbered else EXAMPLES,
-        notes=("The interpretation is data: nothing was run, read or written (ADR 0045 P13-2).",),
+        notes=("The interpretation is data: nothing was run, read or written.",),
     )
 
 

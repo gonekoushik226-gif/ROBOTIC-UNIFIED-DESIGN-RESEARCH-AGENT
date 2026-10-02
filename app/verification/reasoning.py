@@ -195,7 +195,7 @@ def verify_reasoning(answer: RecordedAnswer, repository: Repository | None) -> A
             f"{s.get('rule', 'REQUIREMENT_SET')} v{s.get('rule_version', '1')} [{', '.join(s['relationships'])}]"
             for n, s in enumerate(steps, start=1)
         ),
-        calculation=("No calculation: dependency reasoning performs none (Phase 10).",),
+        calculation=("No calculation: dependency reasoning performs none.",),
         assumptions=tuple(
             f"{a.node} ({a.statement or 'assumed available'}) (ASSUMPTION)" for a in answer.request.assumptions
         ),
@@ -216,7 +216,7 @@ def verify_reasoning(answer: RecordedAnswer, repository: Repository | None) -> A
         checks=tuple(checks),
         exposure=exposure,
         database_opened=repository is not None,
-        notes=("Nothing was written: the verification is returned only (ADR 0044 P12-3).",
+        notes=("Nothing was written: the verification is returned only.",
                "The answer file was read as untrusted input: its request was run again and its "
-               "results compared, never believed (P12-12)."),
+               "results compared, never believed."),
     )

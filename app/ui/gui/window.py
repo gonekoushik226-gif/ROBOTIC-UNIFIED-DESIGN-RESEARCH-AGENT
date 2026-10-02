@@ -10,6 +10,7 @@ only lays out the forms, shows the results and puts writes and actions to the us
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import math
 import os
@@ -44,6 +45,7 @@ from app.providers import settings as ai_settings
 from app.updates import UpdateChecker, UpdateInfo, UpdateStatus
 
 from app.ui.gui import answerview, commands, mathrender, theme
+from app.ui.gui import worked as worked_solution
 from app.ui.gui.commands import Approval, CommandResult, FormError
 from app.version import VERSION
 
@@ -56,11 +58,13 @@ class VoiceResult:
     """One dictation attempt: the recognized text, or why there is none.
 
     `error` is `""` when the user cancelled (nothing is shown for that - it was their own
-    choice), `None` when `text` is the whole story, and a message otherwise.
+    choice), `None` when `text` is the whole story, and a message otherwise. `uncertain`
+    means the recognizer was unsure of its own words: they are shown for checking.
     """
 
     text: str
     error: str | None
+    uncertain: bool = False
 
 
 def window_icons(root: tk.Tk, ico: Path) -> tuple[int, ...]:
@@ -181,8 +185,11 @@ class RudraWindow:
         self.full_shown: bool | None = None
         self.show(full=full)
         self.set_state("READY", theme.OK)
+        #: Something other than the welcome text has been shown in the output, so a late
+        #: welcome must not replace it.
+        self.output_touched = False
         if autostart:
-            root.after(250, lambda: self.submit(commands.status("start")))
+            root.after(250, self._start)
             root.after(4000, self.check_for_updates)
 
     # -------------------------------------------------------------- sizes and images
@@ -238,6 +245,36 @@ class RudraWindow:
         self.full.show_project()
         self.compact.show_project()
 
+    # -------------------------------------------------------------- starting up
+
+    def _start(self) -> None:
+        """Start RUDRA in the background; the person is told what it holds, not shown a report."""
+        self.submit(commands.status("start"), on_done=self._started)
+
+    def _started(self, result: CommandResult) -> None:
+        if not result.ok:
+            self.show_note(commands.startup_summary(result), tag="warn")
+            self.set_state("NOT READY", theme.WARN)
+            return
+        self.attention = commands.startup_attention(result)
+        self.refresh_welcome()
+
+    def refresh_welcome(self) -> None:
+        """Say what the knowledge base holds, in the output, until something else is shown."""
+        def done(result: CommandResult) -> None:
+            if self.output_touched:
+                return
+            summary = commands.welcome_facts(result)
+            self.compact.output.show_welcome(summary, self.attention)
+            self.full.output.show_welcome(summary, self.attention)
+
+        if not self.busy:
+            self.submit(commands.inventory(), on_done=done)
+
+    attention: tuple[str, ...] = ()
+    #: What the window is busy with (for diagnostics): the command line, or the task's name.
+    running: tuple[str, ...] = ()
+
     # -------------------------------------------------------------- running commands
 
     def run_form(self, build: Callable[[], list[str]], *, approve: bool = False) -> bool:
@@ -268,6 +305,7 @@ class RudraWindow:
         for control in self.run_controls:
             control.state(["disabled"])
         self.set_state(f"RUNNING · {argv[0] if argv else 'start'}", theme.ACCENT)
+        self.running = tuple(argv)
         if on_done is None:
             self.compact.show_running(argv)
             self.full.show_running(argv)
@@ -294,15 +332,63 @@ class RudraWindow:
             self.set_state("READY", theme.OK)
             on_done(result)
             return
+        self.output_touched = True
         self.compact.show_result(result)
         self.full.show_result(result)
         self.pending_import_name = None
-        if result.ok:
+        if commands.is_friendly_command(result.argv):
+            text, good = commands.finished_state(result)
+            self.set_state(text, theme.OK if good else theme.WARN)
+        elif result.ok:
             self.set_state(f"READY · {result.argv[0] if result.argv else 'start'} done", theme.OK)
         else:
             self.set_state(f"EXIT {result.exit_code} · {result.meaning}", theme.WARN)
         if self.on_result is not None:
             self.on_result(result)
+
+    def submit_sequence(self, argvs: list[list[str]], *, approval: Approval | None = None, label: str,
+                        on_done: Callable[[list[CommandResult]], None], show: list[str] | None = None) -> bool:
+        """Run one or more command lines in order, on one worker thread, as a single
+        operation (one approval, one busy state). Stops at the first command that does
+        not exit 0; `on_done` always receives every result obtained, in order.
+
+        Unlike `submit`, no output view is updated automatically: a sequence's own
+        meaning (Add Document: `extract` then `index`, so every query mode is ready
+        immediately) is for the caller to render as one result. `window.on_result`, when
+        set, still fires once, with the first command's result - what a plain `submit`
+        of that command alone would have reported.
+        """
+        if self.busy:
+            return False
+        if approval is not None and not self.confirm(approval):
+            self.show_note("Cancelled. Nothing was run.", tag="meta")
+            self.set_state("CANCELLED", theme.MUTED)
+            return False
+
+        if show is not None:
+            self.compact.show_running(show)
+            self.full.show_running(show)
+
+        def work() -> list[CommandResult]:
+            results: list[CommandResult] = []
+            for argv in argvs:
+                result = commands.run(argv, self.project_root)
+                results.append(result)
+                if not result.ok:
+                    break
+            return results
+
+        def done(results: object, error: BaseException | None) -> None:
+            if error is not None:
+                self.show_note("RUDRA hit an unexpected error partway through.\n\n" + str(error), tag="err")
+                return
+            assert isinstance(results, list)
+            self.last = results[-1]
+            on_done(results)
+            if self.on_result is not None:
+                self.on_result(results[0])
+
+        return self.run_task(label, work, done)
 
     # -------------------------------------------------------------- work that is not a command
 
@@ -315,6 +401,7 @@ class RudraWindow:
         for control in self.run_controls:
             control.state(["disabled"])
         self.set_state(f"RUNNING · {label}", theme.ACCENT)
+        self.running = (label,)
 
         def worker() -> None:
             try:
@@ -427,22 +514,28 @@ class RudraWindow:
 
     # -------------------------------------------------------------- voice input (dictation)
 
-    def listen(self, done: Callable[[VoiceResult], None], *, seconds: int = 12) -> Callable[[], None]:
+    def listen(self, done: Callable[[VoiceResult], None], *, seconds: int = 12,
+               on_phase: Callable[[str], None] | None = None) -> Callable[[], None]:
         """Capture one spoken utterance and hand its text (or a friendly reason it has none)
-        to `done`, on this thread. Returns a `stop()` the caller may invoke to cancel early;
-        calling it after `done` has already run does nothing.
+        to `done`, on this thread. Returns a `stop()` the caller may invoke: the first call,
+        while RUDRA is still listening, ends the listening and recognizes what was said; a call
+        after that cancels and discards. Calling it after `done` has already run does nothing.
+        `on_phase("listening" | "recognizing")` is called on this thread as the work moves on.
 
         Nothing is carried out and nothing is kept: this is dictation into a text field, the
         same question or command the user could have typed (master specification: a user can
         edit the recognized words before anything is sent to RUDRA).
         """
-        from app.voice import SpeechCancelled, SpeechUnavailable, listen as voice_listen
+        from app.voice import SpeechCancelled, SpeechUnavailable, listen as voice_listen, words as voice_words
 
-        cancel = threading.Event()
+        hints = voice_words.load(self.project_root / "config")
+        cancel, finish = threading.Event(), threading.Event()
+        state = {"phase": "listening", "finished": False}
 
         def work() -> VoiceResult:
             try:
-                transcript = voice_listen(seconds, cancel=cancel)
+                transcript = voice_listen(seconds, cancel=cancel, finish=finish, hints=hints,
+                                          on_phase=lambda phase: state.update(phase=phase))
             except SpeechCancelled:
                 return VoiceResult(text="", error="")
             except SpeechUnavailable as exc:
@@ -450,17 +543,31 @@ class RudraWindow:
             if not transcript.text:
                 return VoiceResult(text="", error="RUDRA did not hear anything. Try again and speak soon after "
                                                    "pressing Speak.")
-            return VoiceResult(text=transcript.text, error=None)
+            return VoiceResult(text=transcript.text, error=None, uncertain=transcript.uncertain)
+
+        def watch() -> None:
+            if not state["finished"]:
+                if on_phase is not None:
+                    on_phase(str(state["phase"]))
+                self.root.after(150, watch)
 
         def finished(result: object, error: BaseException | None) -> None:
+            state["finished"] = True
             if error is not None:
                 done(VoiceResult(text="", error=f"RUDRA could not use the microphone: {error}"))
                 return
             assert isinstance(result, VoiceResult)
             done(result)
 
-        self.run_task("listening", work, finished)
-        return cancel.set
+        def stop() -> None:
+            if state["phase"] == "listening" and not finish.is_set():
+                finish.set()
+            else:
+                cancel.set()
+
+        if self.run_task("listening", work, finished):
+            watch()
+        return stop
 
     def layout(self) -> PathLayout:
         """This project's folders, as the command line resolves them."""
@@ -555,11 +662,19 @@ class OutputView:
         )
         down = ttk.Scrollbar(self.frame, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=down.set)
+        down.pack(side="right", fill="y")
         if not compact:
             across = ttk.Scrollbar(self.frame, orient="horizontal", command=self.text.xview)
-            self.text.configure(xscrollcommand=across.set)
-            across.pack(side="bottom", fill="x")
-        down.pack(side="right", fill="y")
+
+            def sideways(first: str, last: str) -> None:
+                """Shown only when a line is wider than the view (a raw report); not for words that wrap."""
+                across.set(first, last)
+                if float(first) <= 0.0 and float(last) >= 1.0:
+                    across.pack_forget()
+                elif not across.winfo_ismapped():
+                    across.pack(side="bottom", fill="x", before=down)
+
+            self.text.configure(xscrollcommand=sideways)
         self.text.pack(side="left", fill="both", expand=True)
         for tag, color in (("cmd", theme.ACCENT_SOFT), ("out", theme.TEXT), ("log", theme.FAINT),
                            ("err", theme.ERROR), ("warn", theme.WARN), ("meta", theme.MUTED)):
@@ -576,6 +691,15 @@ class OutputView:
         self.text.tag_configure("s_label", foreground=theme.FAINT, font=window.fonts.code, spacing1=window.px(4))
         self.text.tag_configure("s_text", foreground=theme.MUTED, font=window.fonts.small, lmargin1=window.px(14),
                                 lmargin2=window.px(14))
+        # A worked solution: the step's label, its typeset lines (indented), the note after a
+        # formula, and the closing check.
+        self.text.tag_configure("w_step", foreground=theme.MUTED, font=window.fonts.label, spacing1=window.px(8),
+                                lmargin1=window.px(2), lmargin2=window.px(2))
+        self.text.tag_configure("w_math", foreground=theme.TEXT, font=(body[0], body[1] + 2), lmargin1=window.px(16),
+                                lmargin2=window.px(16), spacing1=window.px(1), spacing3=window.px(1))
+        self.text.tag_configure("w_note", foreground=theme.FAINT, font=window.fonts.small)
+        self.text.tag_configure("w_ok", foreground=theme.OK, font=body, spacing1=window.px(8))
+        self.text.tag_configure("w_bad", foreground=theme.ERROR, font=body, spacing1=window.px(8))
         self.compact = compact
         self.embedded: list[tk.Widget] = []
         self.answer: answerview.AnswerDocument | None = None
@@ -588,7 +712,7 @@ class OutputView:
         self.explained_by = ""
         self.note_line: str | None = None
         self._metrics: mathrender.TkMetrics | None = None
-        self._extract_result: CommandResult | None = None
+        self._extract_results: list[CommandResult] = []
         self._extract_name: str | None = None
         self._extract_open = False
 
@@ -602,7 +726,7 @@ class OutputView:
 
     def write(self, parts: list[tuple[str, str]]) -> None:
         self.answer = None
-        self._extract_result = None
+        self._extract_results = []
         self._clear_embedded()
         self.text.configure(wrap="word" if self.compact else "none")
         self.text.configure(state="normal")
@@ -617,7 +741,53 @@ class OutputView:
         self.write([(text, tag)])
 
     def show_running(self, argv: list[str]) -> None:
-        self.write([(f"› {commands.display_command(argv)}\n\n", "cmd"), ("Running…", "meta")])
+        if commands.is_friendly_command(argv):
+            self.write([(commands.working_text(argv), "meta")])
+        else:
+            self.write([(f"› {commands.display_command(argv)}\n\n", "cmd"), ("Running…", "meta")])
+
+    def show_welcome(self, facts: dict, attention: tuple[str, ...]) -> None:
+        """The first thing a person sees: whether there is knowledge yet, and what to do next."""
+        self.answer = None
+        self._extract_results = []
+        self._clear_embedded()
+        self.text.configure(state="normal", wrap="word")
+        self.text.delete("1.0", "end")
+        documents, counts = facts.get("documents", 0), facts.get("counts") or {}
+        if not documents:
+            self.text.insert("end", "Welcome to RUDRA.\n", "a_line")
+            self.text.insert("end", "Your knowledge base is empty. Add a document - a PDF, Word file, slides, a "
+                                    "spreadsheet or a scanned page - and RUDRA reads it and keeps what it states, with "
+                                    "the page it came from. Then ask it questions in plain English, or ask it to "
+                                    "calculate.\n", "a_extra")
+            self._welcome_button("Add a document", "import")
+        else:
+            self.text.insert("end", "Your knowledge base is ready.\n", "a_line")
+            names = (("CONCEPT", "concept"), ("DEFINITION", "definition"), ("EQUATION", "equation"),
+                     ("VARIABLE", "variable"), ("RULE", "rule"), ("EXAMPLE", "example"))
+            parts = [f"{documents} document{'s' if documents != 1 else ''}"]
+            parts += [f"{counts[key]} {label}{'s' if counts[key] != 1 else ''}" for key, label in names
+                      if counts.get(key)]
+            self.text.insert("end", " · ".join(parts) + "\n", "a_extra")
+            if counts.get("EQUATION"):
+                self.text.insert("end", f"{facts.get('usable', 0)} of the {counts['EQUATION']} equations can be "
+                                        "calculated with.\n", "a_extra")
+            self.text.insert("end", "Ask a question above, or look through what RUDRA holds.\n", "a_extra")
+            self._welcome_button("See what RUDRA knows", "knowledge")
+        for line in attention:
+            self.text.insert("end", line + "\n", "a_warn")
+        self.text.configure(state="disabled")
+        self.text.see("1.0")
+
+    def _welcome_button(self, label: str, page: str) -> None:
+        def go() -> None:
+            self.window.show(full=True)
+            self.window.full.select(page)
+
+        button = ttk.Button(self.text, text=label, style="Accent.TButton", command=go)
+        self.embedded.append(button)
+        self.text.window_create("end", window=button, padx=self.window.px(2), pady=self.window.px(8))
+        self.text.insert("end", "\n", "a_line")
 
     def show_result(self, result: CommandResult) -> None:
         if commands.is_answer_command(result.argv):
@@ -626,7 +796,7 @@ class OutputView:
                 self.show_answer(document)
                 return
         if commands.is_extract_command(result.argv):
-            self.show_extract_summary(result)
+            self.show_extract_summary([result])
             return
         self.write([
             (f"› {commands.display_command(result.argv)}\n\n", "cmd"),
@@ -643,20 +813,22 @@ class OutputView:
 
     # -------------------------------------------------------------- adding a document
 
-    def show_extract_summary(self, result: CommandResult) -> None:
-        """"Added to your knowledge base.", not a dump of `extract`'s own technical report -
-        that stays one click away behind Details, exactly as RUDRA produced it."""
+    def show_extract_summary(self, results: list[CommandResult]) -> None:
+        """"Added to your knowledge base.", not a dump of `extract`'s (and `index`'s) own
+        technical report - that stays one click away behind Details, exactly as RUDRA
+        produced it. `results` is `extract` alone, or `extract` then `index` (Add Document:
+        every query mode ready immediately, not only the ones that never needed an index)."""
         self.answer = None
-        self._extract_result = result
+        self._extract_results = results
         self._extract_name = self.window.pending_import_name  # read only: both views need it
         self._extract_open = False
         self._render_extract()
 
     def _render_extract(self) -> None:
-        result = self._extract_result
-        if result is None:
+        results = self._extract_results
+        if not results:
             return
-        summary = commands.extract_summary(result)
+        summary = commands.extract_summary(results)
         self._clear_embedded()
         self.text.configure(state="normal", wrap="word")
         self.text.delete("1.0", "end")
@@ -665,29 +837,59 @@ class OutputView:
         self.text.insert("end", summary.headline + "\n", "a_line" if summary.ok else "a_warn")
         extra = []
         if summary.pages:
-            extra.append(summary.pages)
+            extra.append(summary.pages + " read")
         if summary.ocr_count:
             extra.append(f"{summary.ocr_count} page(s) read by OCR - that text is marked uncertain")
-        if summary.issue_total:
-            extra.append(f"{summary.issue_total} extraction warning(s)")
         if extra:
             self.text.insert("end", " · ".join(extra) + "\n", "a_extra")
-        button = ttk.Button(self.text, text="Hide details" if self._extract_open else "Details",
+        for line in summary.advice:
+            self.text.insert("end", line.rstrip(".") + ".\n", "a_extra")
+        if summary.empty:
+            self.text.insert("end", "RUDRA keeps definitions, equations, variables, properties, rules and similar "
+                                    "statements; this document has none in a form it recognises. You can still ask "
+                                    "RUDRA to search its text (for example: Search for a word).\n", "a_extra")
+        if summary.ok and summary.stored:
+            self.text.insert("end", "Stored: " + ", ".join(summary.stored) + "\n", "a_extra")
+        if summary.linked:
+            self.text.insert("end", "Linked: " + summary.linked + "\n", "a_extra")
+        for line in summary.not_stored:
+            self.text.insert("end", "Not stored: " + line + "\n", "a_warn")
+        if summary.ok and summary.ready:
+            if not summary.empty:
+                self.text.insert("end", "You can ask about it now.\n", "a_extra")
+        elif summary.ok:
+            self.text.insert("end", "It will be searchable the next time you ask.\n", "a_extra")
+        row = tk.Frame(self.text, bg=theme.OUTPUT_BG)
+        if summary.ok and summary.document_id:
+            see = ttk.Button(row, text="See what was stored", style="Accent.TButton",
+                             command=lambda: self._see_stored(summary.document_id))
+            see.pack(side="left", padx=(0, self.window.px(6)))
+        button = ttk.Button(row, text="Hide details" if self._extract_open else "Details",
                             command=self.toggle_extract_details)
-        self.embedded.append(button)
-        self.text.window_create("end", window=button, padx=self.window.px(2), pady=self.window.px(6))
+        button.pack(side="left")
+        self.embedded.append(row)
+        self.text.window_create("end", window=row, padx=self.window.px(2), pady=self.window.px(6))
         self.text.insert("end", "\n", "a_line")
         if self._extract_open:
-            self.text.insert("end", f"› {commands.display_command(result.argv)}\n\n", "cmd")
-            for line in result.stdout.splitlines(keepends=True):
-                self.text.insert("end", line, "answer" if commands.is_answer_line(line) else "out")
-            if result.stderr:
-                self.text.insert("end", ("\n" if result.stdout and not result.stdout.endswith("\n") else "")
-                                 + result.stderr, "log" if result.ok else "err")
-            self.text.insert("end", f"\n{'ok' if result.ok else f'exit {result.exit_code}'} · {result.meaning} · "
-                             f"{result.seconds:.2f} s\n", "meta")
+            for result in results:
+                if result.argv and result.argv[0] == "inventory":
+                    continue
+                self.text.insert("end", f"› {commands.display_command(result.argv)}\n\n", "cmd")
+                for line in result.stdout.splitlines(keepends=True):
+                    self.text.insert("end", line, "answer" if commands.is_answer_line(line) else "out")
+                if result.stderr:
+                    self.text.insert("end", ("\n" if result.stdout and not result.stdout.endswith("\n") else "")
+                                     + result.stderr, "log" if result.ok else "err")
+                self.text.insert("end", f"\n{'ok' if result.ok else f'exit {result.exit_code}'} · {result.meaning} "
+                                 f"· {result.seconds:.2f} s\n\n", "meta")
         self.text.configure(state="disabled")
         self.text.see("1.0")
+
+    def _see_stored(self, document_id: str) -> None:
+        self.window.show(full=True)
+        page = self.window.full.pages["knowledge"]
+        page.show_document(document_id, self._extract_name or document_id)
+        self.window.full.select("knowledge")
 
     def toggle_extract_details(self) -> None:
         self._extract_open = not self._extract_open
@@ -723,17 +925,22 @@ class OutputView:
         for index, part in enumerate(document.parts):
             if index:
                 self.text.insert("end", "\n", "a_line")
-            for line in part.lines:
-                self._answer_line(line)
+            if part.worked is not None:
+                self._worked(part.worked)
+            else:
+                for line in part.lines:
+                    self._answer_line(line)
+            if part.conflict is not None:
+                self._conflict(part.conflict)
             if part.has_conflict:
                 self.text.insert("end", "Sources disagree on this. View Sources shows each claim.\n", "a_warn")
             for line in part.uncertain:
                 self.text.insert("end", f"Uncertain: {line}\n", "a_warn")
             self._ai_block(part, document.request)
-            for title, values in part.extras:
+            for title, values in part.shown_extras():
                 self.text.insert("end", theme.spaced(title) + "\n", "a_title")
                 for value in values:
-                    self.text.insert("end", value + "\n", "a_extra")
+                    self._rich_line(value, "a_extra", size=15)
             if not part.details.empty:
                 self._sources_button(part)
                 if part.number in self.expanded:
@@ -742,32 +949,95 @@ class OutputView:
         self.text.yview_moveto(view)
 
     def _answer_line(self, line: str) -> None:
-        found = mathrender.formula_parts(line)
-        if found is None:
-            self.text.insert("end", line + "\n", "a_line")
-            return
-        label, formula = found
-        if label:
-            self.text.insert("end", label, "a_line")
-        self.text.window_create("end", window=self.formula(formula), align="center", padx=self.window.px(4),
-                                pady=self.window.px(2))
-        self.text.insert("end", "\n", "a_line")
+        self._rich_line(line, "a_line", size=17)
 
-    def formula(self, source: str, *, size: float = 17) -> tk.Canvas:
+    def _rich_line(self, line: str, tag: str, *, size: float = 17) -> None:
+        """One line of text; a formula in it - an equation, or LaTeX written in the sentence -
+        is typeset where it stands, the words around it left as they are."""
+        pieces = mathrender.segments(line)
+        if pieces is None:
+            self.text.insert("end", line + "\n", tag)
+            return
+        for kind, piece in pieces:
+            if kind == "text":
+                if piece:
+                    self.text.insert("end", piece, tag)
+            else:
+                self.text.window_create("end", window=self.formula(piece, size=size), align="center",
+                                        padx=self.window.px(4), pady=self.window.px(2))
+        self.text.insert("end", "\n", tag)
+
+    def _math_line(self, markup: str, *, size: float = 17, color: str = theme.TEXT) -> None:
+        """A typeset formula on a line of its own, indented (a step of a worked solution)."""
+        self.text.insert("end", " ", "w_math")
+        self.text.window_create("end", window=self.formula(markup, size=size, color=color), align="center",
+                                padx=self.window.px(2), pady=self.window.px(2))
+        self.text.insert("end", "\n", "w_math")
+
+    def _worked(self, worked: "worked_solution.Worked") -> None:
+        """A calculation as a textbook sets it: the result, what was given, then each step as
+        an equation, the equation with its values put in, and the value it gave."""
+        result = worked.result
+        self.text.insert("end", theme.spaced("Result") + (f"   {result.name}" if result.name else "") + "\n",
+                         "a_title")
+        card = self.formula(result.markup(), size=26, color=theme.ACCENT_SOFT, card=True)
+        self.text.window_create("end", window=card, align="center", padx=self.window.px(2), pady=self.window.px(4))
+        self.text.insert("end", "\n", "a_line")
+        if result.exact:
+            self.text.insert("end", f"rounded to 6 significant figures; the exact value is {result.exact}\n",
+                             "w_note")
+        if worked.givens:
+            self.text.insert("end", theme.spaced("Given") + "\n", "a_title")
+            for given in worked.givens:
+                self.text.insert("end", " ", "w_math")
+                self.text.window_create(
+                    "end", window=self.formula(worked_solution.substitution_markup(
+                        f"{given.symbol} = {given.value}"), size=16), align="center",
+                    padx=self.window.px(2), pady=self.window.px(1))
+                if given.name:
+                    self.text.insert("end", f"  {given.name}", "w_note")
+                self.text.insert("end", "\n", "w_math")
+        if worked.steps:
+            self.text.insert("end", theme.spaced("Working") + "\n", "a_title")
+        for step in worked.steps:
+            self.text.insert("end", f"Step {step.number}" + (f" · {step.name}" if step.name else "") + "\n", "w_step")
+            self._math_line(step.equation)
+            if step.stored:
+                self.text.insert("end", "turned around from the stored equation  ", "w_note")
+                self.text.window_create("end", window=self.formula(step.stored, size=14, color=theme.MUTED),
+                                        align="center", padx=self.window.px(2))
+                self.text.insert("end", "\n", "w_note")
+            self._math_line(step.working)
+        if worked.check:
+            self.text.insert("end", ("✓ " if worked.check_ok else "✗ ") + worked.check + "\n",
+                             "w_ok" if worked.check_ok else "w_bad")
+
+    def _conflict(self, conflict: "worked_solution.Conflict") -> None:
+        """Stored equations that disagree, side by side: each route's equations and the value they
+        gave. None is chosen - RUDRA does not know which of them the documents mean."""
+        self.text.insert("end", theme.spaced("Conflict") + "\n", "a_title")
+        for route in conflict.routes:
+            self.text.insert("end", f"Route {route.letter}\n", "w_step")
+            self._math_line(conflict.route_markup(route), size=16)
+        self.text.insert("end", "No value was chosen.\n", "w_note")
+
+    def formula(self, source: str, *, size: float = 17, color: str = theme.TEXT, card: bool = False) -> tk.Canvas:
         """A typeset formula, drawn on a canvas that sits in the text like a word."""
         if self._metrics is None:
             self._metrics = mathrender.TkMetrics(self.text)
         # A long equation breaks into lines that fit the answer area, as a textbook sets it.
-        available = self.text.winfo_width() - self.window.px(40)
+        available = self.text.winfo_width() - self.window.px(60 if card else 40)
         box = mathrender.layout(mathrender.parse(source), self.window.px(size), self._metrics,
                                 max_width=available if available > self.window.px(200) else None)
-        margin = self.window.px(3)
+        margin = self.window.px(10 if card else 3)
         # Whole pixels, rounded up: the layout measures in fractions, and Tk 9 keeps a
         # fractional size as given, where Tk 8.6 rounded it.
         canvas = tk.Canvas(self.text, width=math.ceil(box.width + 2 * margin),
                            height=math.ceil(box.ascent + box.descent + 2 * margin),
-                           bg=theme.OUTPUT_BG, highlightthickness=0, borderwidth=0, cursor="arrow")
-        mathrender.draw_on_canvas(canvas, box, self._metrics, margin, margin + box.ascent, theme.TEXT)
+                           bg=theme.RAISED if card else theme.OUTPUT_BG,
+                           highlightthickness=1 if card else 0, highlightbackground=theme.ACCENT_DEEP,
+                           borderwidth=0, cursor="arrow")
+        mathrender.draw_on_canvas(canvas, box, self._metrics, margin, margin + box.ascent, color)
         canvas.formula_source = source  # the stored text, unchanged: what the picture shows
         self.embedded.append(canvas)
         return canvas
@@ -819,7 +1089,7 @@ class OutputView:
         for label, value in answerview.detail_lines(part.details, commands.display_command):
             if label:
                 self.text.insert("end", theme.spaced(label) + "\n", "s_label")
-            self.text.insert("end", value + "\n", "s_text")
+            self._source_value(value)
         opened: set[str] = set()
         for identifier in part.details.knowledge_ids():
             trace = self.traces.get(identifier)
@@ -836,6 +1106,26 @@ class OutputView:
                 self.source_open_buttons.append(button)
                 self.text.window_create("end", window=button, padx=self.window.px(14), pady=self.window.px(3))
                 self.text.insert("end", "\n", "s_text")
+
+    def _source_value(self, value: str) -> None:
+        """One line of the sources view. A stored equation is shown typeset; a quotation from a
+        document is shown exactly as it reads there, and when it is written in LaTeX the
+        typeset form follows it - the quotation is the evidence, the picture only helps read it."""
+        stored = answerview.stored_equation(value)
+        if stored is not None:
+            head, formula = stored
+            self.text.insert("end", head, "s_text")
+            self.text.window_create("end", window=self.formula(formula, size=14, color=theme.MUTED),
+                                    align="center", padx=self.window.px(2))
+            self.text.insert("end", "\n", "s_text")
+            return
+        self.text.insert("end", value + "\n", "s_text")
+        quoted = answerview.quoted_formula(value)
+        if quoted is not None:
+            self.text.insert("end", " ", "s_text")
+            self.text.window_create("end", window=self.formula(quoted, size=14, color=theme.MUTED), align="center",
+                                    padx=self.window.px(2))
+            self.text.insert("end", "\n", "s_text")
 
     def toggle_sources(self, number: int) -> None:
         """Show or hide one part's sources; the first opening traces its knowledge items."""
@@ -903,11 +1193,18 @@ class UpdateBanner:
 
 class MicButton:
     """Speak a question or command instead of typing it (master specification: click, speak,
-    edit, send - no dependency beyond Windows' own speech engine, already used by `voice`).
+    edit, send). RUDRA recognizes speech offline, on this computer, with a Whisper model.
 
-    One click starts listening; the button's own label becomes the way to stop early. The
-    recognized words replace the text wherever `insert` puts them - never sent by themselves.
+    One click starts listening and the button says so; listening ends by itself when the
+    speaker stops, or on a second click, and then RUDRA works out the words - the button
+    says that too, and a further click cancels. The recognized words replace the text
+    wherever `insert` puts them - never sent by themselves.
     """
+
+    #: Short, because the button sits in the assistant's one row with the input and Send.
+    LABELS = {"listening": "Listening…", "recognizing": "Working…"}
+    #: What the status line says meanwhile: how to finish, and how to cancel.
+    STATES = {"listening": "LISTENING · CLICK WHEN DONE", "recognizing": "WORKING OUT THE WORDS · CLICK TO CANCEL"}
 
     def __init__(self, window: RudraWindow, parent: tk.Misc, insert: Callable[[str], None], *,
                  idle: str = "Speak"):
@@ -923,14 +1220,22 @@ class MicButton:
             return
         if self.window.busy:
             return
-        self.button.configure(text="Listening… (click to stop)")
-        self._stop = self.window.listen(self._done)
+        self.button.configure(text=self.LABELS["listening"])
+        self._stop = self.window.listen(self._done, on_phase=self._phase)
+        self.window.set_state(self.STATES["listening"], theme.ACCENT)  # after the task's own "RUNNING" state
+
+    def _phase(self, phase: str) -> None:
+        if self._stop is not None:
+            self.button.configure(text=self.LABELS.get(phase, self.LABELS["listening"]))
+            self.window.set_state(self.STATES.get(phase, self.STATES["listening"]), theme.ACCENT)
 
     def _done(self, result: VoiceResult) -> None:
         self._stop = None
         self.button.configure(text=self.idle)
         if result.text:
             self.insert(result.text)
+            if result.uncertain:
+                self.window.set_state("CHECK THE WORDS", theme.WARN)
         elif result.error:
             self.window.show_note(result.error, tag="warn")
 
@@ -1124,36 +1429,99 @@ class FullView:
         panes = tk.PanedWindow(main, orient="vertical", bg=theme.BG, sashwidth=px(8), sashrelief="flat",
                                borderwidth=0, showhandle=False)
         panes.pack(fill="both", expand=True, padx=px(28), pady=(px(14), px(16)))
+        self.panes = panes
         holder = tk.Frame(panes, bg=theme.BG)
-        holder.grid_rowconfigure(0, weight=1)
-        holder.grid_columnconfigure(0, weight=1)
-        panes.add(holder, minsize=px(170), height=px(215))
+        panes.add(holder, minsize=px(150), height=px(215))
+        # The page is as tall as it needs to be; when the window is too short for it, it scrolls.
+        self.canvas = tk.Canvas(holder, bg=theme.BG, highlightthickness=0, borderwidth=0)
+        self.scrollbar = ttk.Scrollbar(holder, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.body = tk.Frame(self.canvas, bg=theme.BG)
+        self.body.grid_columnconfigure(0, weight=1)
+        self.body.grid_rowconfigure(0, weight=1)
+        self._body_id = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
+        self.body.bind("<Configure>", lambda _event: self._resized())
+        self.canvas.bind("<Configure>", lambda event: (self.canvas.itemconfigure(self._body_id, width=event.width),
+                                                       self._resized()))
+        holder.bind_all("<MouseWheel>", self._wheel, add="+")
 
         out = tk.Frame(panes, bg=theme.BG)
         panes.add(out, minsize=px(140))
+        self.output_frame = out
         head = tk.Frame(out, bg=theme.BG)
         head.pack(fill="x", pady=(0, px(6)))
-        tk.Label(head, text=theme.spaced("Output"), bg=theme.BG, fg=theme.FAINT, font=fonts.code).pack(side="left")
+        self.output_label = tk.Label(head, text=theme.spaced("Result"), bg=theme.BG, fg=theme.FAINT, font=fonts.code)
+        self.output_label.pack(side="left")
         ttk.Button(head, text="Copy", command=self.copy).pack(side="right")
         self.output = OutputView(window, out, compact=False)
         self.output.frame.pack(fill="both", expand=True)
-        self.output.show_text("Output of each command appears here, exactly as the command line prints it.",
-                              tag="meta")
+        self.output.show_text("RUDRA is starting…", tag="meta")
 
         self.pages: dict[str, Page] = {}
         self.nav: dict[str, NavItem] = {}
+        advanced_shown = False
         for page_class in PAGES:
-            page = page_class(self, holder)
+            page = page_class(self, self.body)
             page.frame.grid(row=0, column=0, sticky="nsew")
+            page.frame.grid_remove()
             self.pages[page.key] = page
             if page_class.hidden:
                 continue
-            item = NavItem(self, nav, f"{len(self.nav) + 1:02d}", page.title, page.key)
+            if page_class.advanced and not advanced_shown:
+                advanced_shown = True
+                tk.Label(nav, text=theme.spaced("Advanced"), bg=theme.SURFACE, fg=theme.FAINT, font=fonts.code,
+                         anchor="w").pack(fill="x", padx=px(14), pady=(px(16), px(2)))
+            code = "·" if page_class.advanced else f"{len([n for n in self.nav if not self.pages[n].advanced]) + 1:02d}"
+            item = NavItem(self, nav, code, page.title, page.key)
             item.frame.pack(fill="x")
             self.nav[page.key] = item
         self._project_panel(sidebar)
         self.selected = ""
-        self.select("status")
+        self.select("ask")
+        panes.bind("<Map>", lambda _event: self.fit())
+
+    # -------------------------------------------------------------- the scrolling page
+
+    def _resized(self) -> None:
+        """Keep the scrollable area the size of the page, and show the scrollbar only when it is needed."""
+        needed = self.body.winfo_reqheight()
+        self.canvas.itemconfigure(self._body_id, height=max(needed, self.canvas.winfo_height()))
+        self.canvas.configure(scrollregion=(0, 0, self.canvas.winfo_width(), max(needed, self.canvas.winfo_height())))
+        if needed > self.canvas.winfo_height() > 1:
+            if not self.scrollbar.winfo_ismapped():
+                self.scrollbar.pack(side="right", fill="y")
+        else:
+            self.scrollbar.pack_forget()
+            self.canvas.yview_moveto(0)
+
+    def _wheel(self, event) -> None:
+        if not self.scrollbar.winfo_ismapped():
+            return
+        widget = self.window.root.winfo_containing(event.x_root, event.y_root)
+        while widget is not None:
+            if widget is self.canvas:
+                self.canvas.yview_scroll(-1 * (event.delta // 120), "units")
+                return
+            widget = widget.master
+
+    def _output_shown(self) -> bool:
+        """Whether the result area is part of the window now (a pane is a Tcl object, not a string)."""
+        return str(self.output_frame) in [str(pane) for pane in self.panes.panes()]
+
+    def fit(self) -> None:
+        """Give the page the height it needs; the result below gets the rest."""
+        px = self.window.px
+        total = self.panes.winfo_height()
+        if total <= 1:
+            return
+        self.body.update_idletasks()
+        if self._output_shown():
+            wanted = self.body.winfo_reqheight() + px(6)
+            top = max(px(120), min(wanted, total - px(190)))
+            with contextlib.suppress(tk.TclError):  # the pane may not be laid out yet; the next call fits it
+                self.panes.sash_place(0, 0, top)
+        self._resized()
 
     def _brand(self, sidebar: tk.Frame) -> None:
         """The sidebar's head: the mark over a faint grid, framed by corner brackets."""
@@ -1184,7 +1552,7 @@ class FullView:
         px, fonts = self.window.px, self.window.fonts
         panel = tk.Frame(sidebar, bg=theme.SURFACE)
         panel.pack(side="bottom", fill="x", padx=px(16), pady=px(16))
-        tk.Label(panel, text=theme.spaced("Project"), bg=theme.SURFACE, fg=theme.FAINT,
+        tk.Label(panel, text=theme.spaced("Your data"), bg=theme.SURFACE, fg=theme.FAINT,
                  font=fonts.code).pack(anchor="w")
         self.project = tk.Label(panel, bg=theme.SURFACE, fg=theme.MUTED, font=fonts.small, justify="left",
                                 anchor="w", wraplength=px(212))
@@ -1193,7 +1561,7 @@ class FullView:
         buttons.pack(fill="x")
         ttk.Button(buttons, text="Change…", command=self.change_project).pack(side="left")
         if sys.platform == "win32":
-            ttk.Button(buttons, text="Open", command=lambda: os.startfile(self.window.project_root)).pack(
+            ttk.Button(buttons, text="Open folder", command=lambda: os.startfile(self.window.project_root)).pack(
                 side="left", padx=(px(6), 0))
         self.show_project()
 
@@ -1210,15 +1578,27 @@ class FullView:
 
     def select(self, key: str) -> None:
         page = self.pages[key]
-        page.frame.tkraise()
+        for other in self.pages.values():
+            other.frame.grid_remove()
+        page.frame.grid(row=0, column=0, sticky="nsew")
         for name, item in self.nav.items():
             item.set_active(name == key)
-        code = f"{list(self.nav).index(key) + 1:02d}" if key in self.nav else "·"
-        self.page_code.configure(text=f"{code}  /  {theme.spaced(page.title)}")
+        main = [name for name in self.nav if not self.pages[name].advanced]
+        if key in main:
+            self.page_code.configure(text=f"{main.index(key) + 1:02d}  /  {theme.spaced(page.title)}")
+        else:
+            self.page_code.configure(text=f"{theme.spaced('Advanced')}  /  {theme.spaced(page.title)}")
         self.page_title.configure(text=page.heading)
         self.page_text.configure(text=page.description)
         self.selected = key
+        shown = self._output_shown()
+        if page.shows_output and not shown:
+            self.panes.add(self.output_frame, minsize=self.window.px(140))
+        elif not page.shows_output and shown:
+            self.panes.forget(self.output_frame)
         page.focus()
+        self.canvas.yview_moveto(0)
+        self.window.root.after_idle(self.fit)
 
     def focus(self) -> None:
         self.pages[self.selected].focus()
@@ -1251,6 +1631,10 @@ class Page:
     #: True for a page kept fully working (and reachable by `FullView.select`) but not given
     #: its own sidebar entry, because Settings now gives the same capability a simpler home.
     hidden = False
+    #: Kept for the person who wants the detail underneath; listed under "Advanced" in the sidebar.
+    advanced = False
+    #: False for a page that fills the window by itself and needs no result area under it.
+    shows_output = True
 
     def __init__(self, view: FullView, parent: tk.Misc):
         self.view = view
@@ -1271,9 +1655,9 @@ class Page:
     def label(self, parent: tk.Misc, text: str) -> tk.Label:
         return tk.Label(parent, text=theme.spaced(text), bg=theme.BG, fg=theme.FAINT, font=self.window.fonts.code)
 
-    def note(self, parent: tk.Misc, text: str) -> tk.Label:
+    def note(self, parent: tk.Misc, text: str, *, wrap: int = 800) -> tk.Label:
         return tk.Label(parent, text=text, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label,
-                        justify="left", anchor="w", wraplength=self.window.px(800))
+                        justify="left", anchor="w", wraplength=self.window.px(wrap))
 
     def entry(self, parent: tk.Misc, value: str = "", *, width: int = 60) -> tuple[ttk.Entry, tk.StringVar]:
         variable = tk.StringVar(master=self.window.root, value=value)
@@ -1296,15 +1680,16 @@ class Page:
 
 class StatusPage(Page):
     key, title = "status", "Status"
+    advanced = True
     heading = "Status"
-    description = ("The startup report RUDRA prints each time it starts, and the command line's other status "
-                   "views. None of them writes to the knowledge database.")
+    description = ("What RUDRA found on this computer when it started, and where it keeps things. Nothing here "
+                   "changes your knowledge.")
 
     def build(self) -> None:
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(anchor="w", pady=(self.window.px(8), 0))
-        for text, command in (("Startup report", "start"), ("Environment", "env"), ("Paths", "paths"),
-                              ("Configuration", "config"), ("Version", "version")):
+        for text, command in (("Startup report", "start"), ("This computer", "env"), ("Folders", "paths"),
+                              ("Settings file", "config"), ("Version", "version")):
             control = self.button(row, text, lambda c=command: self.run(c), accent=command == "start")
             control.pack(side="left", padx=(0, self.window.px(8)))
             self.first = self.first or control
@@ -1316,13 +1701,13 @@ class StatusPage(Page):
 class AskPage(Page):
     key, title = "ask", "Ask"
     heading = "Ask RUDRA"
-    description = ("Ask a question, ask RUDRA to calculate something, or tell it what to do - in plain English, "
-                   "typed or spoken. RUDRA answers from your own documents and its own deterministic engines; "
-                   "it never guesses, and it says so when it does not understand or does not have enough to go on.")
+    description = ("Ask in plain English - what something is, how things relate, or a calculation. RUDRA answers "
+                   "from your own documents and shows where each answer came from. It does not guess: when your "
+                   "documents do not say, it tells you.")
 
     def build(self) -> None:
         px = self.window.px
-        self.label(self.frame, "Question or request").pack(anchor="w", pady=(px(8), px(4)))
+        self.label(self.frame, "Your question").pack(anchor="w", pady=(px(8), px(4)))
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(fill="x")
         self.field, self.question = self.entry(row, width=64)
@@ -1332,18 +1717,33 @@ class AskPage(Page):
         self.mic.button.pack(side="left", padx=(px(6), 0))
         self.button(row, "Ask", self.run, accent=True).pack(side="left", padx=(px(6), 0))
         self.first = self.field
-        self.note(self.frame, "For example: What is resistance?  ·  Which equations are associated with "
-                              "resistance?  ·  Calculate I given I = V / R, V = 10 V and R = 5 Ω."
+        self.note(self.frame, "For example:  What is voltage?  ·  Which equations are given for resistance?  ·  "
+                              "Calculate the current when V = 10 V and R = 5 Ω  ·  Find the output voltage given "
+                              "Vin = 12 V, R1 = 10 kΩ and R2 = 20 kΩ."
                   ).pack(fill="x", pady=(px(10), 0))
-        options = tk.Frame(self.frame, bg=theme.BG)
-        options.pack(fill="x", pady=(px(14), 0))
-        self.label(options, "Advanced").pack(anchor="w")
-        ttk.Checkbutton(options, text="Act on this computer (otherwise an action request runs on the simulated "
-                                      "computer)", variable=self.window.act).pack(anchor="w", pady=(px(4), 0))
-        ttk.Checkbutton(options, text="Confirm medium-risk steps (--confirm)",
+        self.options_open = False
+        self.options_toggle = tk.Label(self.frame, text="More options  ▸", bg=theme.BG, fg=theme.FAINT,
+                                       font=self.window.fonts.label, cursor="hand2", anchor="w")
+        self.options_toggle.pack(anchor="w", pady=(px(10), 0))
+        self.options_toggle.bind("<Button-1>", lambda _event: self.toggle_options())
+        self.options = tk.Frame(self.frame, bg=theme.BG)
+        ttk.Checkbutton(self.options, text="Let RUDRA carry out requests to do things on this computer (open an "
+                                           "application, create a file ...)", variable=self.window.act
+                        ).pack(anchor="w", pady=(px(4), 0))
+        ttk.Checkbutton(self.options, text="Go ahead with actions that change something, after I have asked",
                         variable=self.window.confirm_medium).pack(anchor="w", pady=(px(2), 0))
-        self.note(options, "Actions always pass RUDRA's permission check; high-risk actions are not enabled."
+        self.note(self.options, "Without the first box a request to do something is only rehearsed on a simulated "
+                                "computer. Every action is checked first, and risky ones are never enabled."
                   ).pack(fill="x", pady=(px(4), 0))
+
+    def toggle_options(self) -> None:
+        self.options_open = not self.options_open
+        if self.options_open:
+            self.options.pack(fill="x", after=self.options_toggle)
+        else:
+            self.options.pack_forget()
+        self.options_toggle.configure(text="More options  ▾" if self.options_open else "More options  ▸")
+        self.view.fit()
 
     def _dictated(self, text: str) -> None:
         self.question.set(text)
@@ -1355,18 +1755,238 @@ class AskPage(Page):
                                                          confirm=self.window.confirm_medium.get()))
 
 
+class KnowledgePage(Page):
+    """What RUDRA knows: each document's result and every item, with where it came from."""
+
+    key, title = "knowledge", "Knowledge"
+    shows_output = False
+    heading = "What RUDRA knows"
+    description = ("Everything stored from your documents, with the page it came from: concepts, definitions, "
+                   "equations, variables and more - and what was found but not stored, and why. Pick a kind, "
+                   "then an item to see its source.")
+
+    ALL = "Documents"
+
+    def build(self) -> None:
+        from app.inventory import KINDS
+
+        px = self.window.px
+        top = tk.Frame(self.frame, bg=theme.BG)
+        top.pack(fill="x", pady=(px(6), px(6)))
+        self.label(top, "Show").pack(side="left")
+        self.kind_names = {self.ALL: ""} | {label: kind for kind, label in KINDS.items()}
+        self.kind = tk.StringVar(master=self.window.root, value=self.ALL)
+        chooser = ttk.Combobox(top, textvariable=self.kind, values=list(self.kind_names), state="readonly", width=18)
+        chooser.pack(side="left", padx=(px(10), px(14)))
+        chooser.bind("<<ComboboxSelected>>", lambda _event: self.load())
+        self.document = tk.StringVar(master=self.window.root, value="All documents")
+        self.documents = ttk.Combobox(top, textvariable=self.document, values=["All documents"], state="readonly",
+                                      width=34)
+        self.documents.pack(side="left")
+        self.documents.bind("<<ComboboxSelected>>", lambda _event: self.load())
+        self.button(top, "Refresh", self.load).pack(side="right")
+        self.summary = tk.Label(self.frame, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label, anchor="w",
+                                justify="left", wraplength=px(820))
+        self.summary.pack(fill="x", pady=(px(2), px(6)))
+
+        style = ttk.Style(self.window.root)
+        style.configure("Knowledge.Treeview", background=theme.OUTPUT_BG, fieldbackground=theme.OUTPUT_BG,
+                        foreground=theme.TEXT, bordercolor=theme.LINE, borderwidth=0, rowheight=px(24),
+                        font=self.window.fonts.body)
+        style.configure("Knowledge.Treeview.Heading", background=theme.RAISED, foreground=theme.MUTED,
+                        font=self.window.fonts.label, relief="flat")
+        style.map("Knowledge.Treeview", background=[("selected", theme.ACCENT_DEEP)],
+                  foreground=[("selected", "#f0f9ff")])
+        listing = tk.Frame(self.frame, bg=theme.OUTPUT_BG, highlightthickness=1, highlightbackground=theme.LINE)
+        listing.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(listing, columns=("kind", "source", "sure"), style="Knowledge.Treeview",
+                                 selectmode="browse", height=9)
+        self.tree.heading("#0", text="Item", anchor="w")
+        self.tree.heading("kind", text="Kind", anchor="w")
+        self.tree.heading("source", text="From", anchor="w")
+        self.tree.heading("sure", text="Certainty", anchor="w")
+        self.tree.column("#0", width=px(380), stretch=True)
+        self.tree.column("kind", width=px(100), stretch=False)
+        self.tree.column("source", width=px(190), stretch=False)
+        self.tree.column("sure", width=px(140), stretch=False)
+        bar = ttk.Scrollbar(listing, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self.show_item())
+        self.detail = tk.Label(self.frame, bg=theme.BG, fg=theme.TEXT, font=self.window.fonts.body, anchor="nw",
+                               justify="left", wraplength=px(820))
+        self.detail.pack(fill="x", pady=(px(8), 0))
+        self.items: dict[str, dict] = {}
+        self._documents: dict[str, str] = {"All documents": ""}
+        self._timer: str | None = None
+        self.first = chooser
+
+    def focus(self) -> None:
+        self.load()
+        super().focus()
+
+    def show_document(self, document_id: str, name: str) -> None:
+        """Open this page on one document's own summary (after adding it)."""
+        self.kind.set(self.ALL)
+        self._documents[name] = document_id
+        self.document.set(name)
+
+    def load(self) -> bool:
+        """Read the inventory for the chosen kind (and document) and list it."""
+        if self._timer is not None:
+            self.window.root.after_cancel(self._timer)
+            self._timer = None
+        if self.window.busy:
+            self._timer = self.window.root.after(300, self.load)  # try again when the window is free
+            return False
+        kind = self.kind_names.get(self.kind.get(), "")
+        document = self._documents.get(self.document.get(), "")
+        return self.window.submit(commands.inventory(kind, document), on_done=lambda result: self._show(result, kind))
+
+    def _show(self, result: CommandResult, kind: str) -> None:
+        import json
+
+        self.tree.delete(*self.tree.get_children())
+        self.items.clear()
+        self.detail.configure(text="")
+        if not result.ok:
+            self.summary.configure(text="There is no knowledge yet. Add a document first.", fg=theme.MUTED)
+            return
+        data = json.loads(result.stdout)
+        documents = data.get("documents", [])
+        self._documents = {"All documents": ""} | {d["name"]: d["id"] for d in documents}
+        self.documents.configure(values=list(self._documents))
+        if self.document.get() not in self._documents:
+            self.document.set("All documents")
+        if not kind:
+            chosen = self._documents.get(self.document.get(), "")
+            self._list_documents([d for d in documents if not chosen or d["id"] == chosen], data)
+            return
+        self.tree.heading("#0", text="Item")
+        self.tree.heading("kind", text="Kind")
+        self.tree.heading("source", text="From")
+        self.tree.heading("sure", text="Certainty")
+        self._columns(kind=100, source=190, sure=100)
+        singular = self.kind.get()[:-1] if self.kind.get().endswith("s") else self.kind.get()
+        for item in data.get("items", []):
+            where = item.get("document") or ""
+            if item.get("page"):
+                where += f"  p.{item['page']}"
+            sure = {"UNCERTAIN": "uncertain", "NOT_STORED": "not stored", "WARNING": "warning"}.get(
+                item.get("certainty", ""), "" if item["kind"] in ("CONCEPT", "RELATIONSHIP") else "as printed")
+            row = self.tree.insert("", "end", text=item["title"],
+                                   values=("Problem" if item["kind"] == "PROBLEM" else singular, where, sure))
+            self.items[row] = item
+        count = len(data.get("items", []))
+        text = f"{count} shown." if count else f"No {self.kind.get().lower()} are stored."
+        if data.get("truncated"):
+            text += " The list was cut short - choose one document."
+        self.summary.configure(text=text, fg=theme.MUTED)
+
+    def _columns(self, *, kind: int, source: int, sure: int) -> None:
+        px = self.window.px
+        self.tree.column("kind", width=px(kind), stretch=False)
+        self.tree.column("source", width=px(source), stretch=False)
+        self.tree.column("sure", width=px(sure), stretch=False)
+
+    def _list_documents(self, documents: list[dict], data: dict) -> None:
+        """The per-document summaries: what was stored, linked and not stored."""
+        self.tree.heading("#0", text="Document")
+        self.tree.heading("kind", text="Type")
+        self.tree.heading("source", text="Size")
+        self.tree.heading("sure", text="Result")
+        self._columns(kind=64, source=96, sure=150)  # a document's lines of text get the room
+        totals = data.get("totals") or {}
+        counts = totals.get("counts") or {}
+        calc = data.get("calculation") or {}
+        words = [f"{counts[k]} {label}" for k, label in (
+            ("CONCEPT", "concepts"), ("DEFINITION", "definitions"), ("EQUATION", "equations"),
+            ("VARIABLE", "variables"), ("RULE", "rules"), ("EXAMPLE", "examples")) if counts.get(k)]
+        text = ", ".join(words) if words else "Nothing is stored yet - add a document."
+        if calc.get("equations"):
+            text += f"  ·  {calc['usable']} of {calc['equations']} equations can be calculated with"
+        if totals.get("uncertain"):
+            text += f"  ·  {totals['uncertain']} items are marked uncertain"
+        self.summary.configure(text=text, fg=theme.MUTED)
+        for document in documents:
+            pages = (f"{document['pages']} page{'s' if document['pages'] != 1 else ''}" if document.get("pages")
+                     else document["source_type"])
+            row = self.tree.insert("", "end", text=document["name"], open=True, values=(
+                document["source_type"], pages, document["status_words"].split(",")[0]))
+            self.items[row] = {"kind": "DOCUMENT", "document": document}
+            stored = [self._counted(kind, n) for kind, n in document.get("stored", {}).items()]
+            for start in range(0, len(stored), 4):
+                self.tree.insert(row, "end", text=("Stored: " if start == 0 else "") + ", ".join(stored[start:start + 4]),
+                                 values=("", "", ""))
+            if document.get("linked"):
+                self.tree.insert(row, "end", text=f"{document['linked']} item(s) were already known from other "
+                                                  "evidence (linked, not duplicated)", values=("", "", ""))
+            for group in document.get("problems", []):
+                label = "Not stored" if group["not_stored"] else "Warning"
+                child = self.tree.insert(row, "end", text=f"{label}: {group['count']} {group['short']}",
+                                         values=("", "", ""))
+                self.items[child] = {"kind": "GROUP", "group": group}
+
+    @staticmethod
+    def _counted(kind: str, count: int) -> str:
+        word = {"PROPERTY": ("property", "properties"), "CONCEPT": ("concept", "concepts"),
+                "DEFINITION": ("definition", "definitions"), "EQUATION": ("equation", "equations"),
+                "VARIABLE": ("variable", "variables"), "UNIT": ("unit", "units"), "RULE": ("rule", "rules"),
+                "EXAMPLE": ("example", "examples"), "PROCEDURE": ("procedure", "procedures"),
+                "RELATIONSHIP": ("relationship", "relationships")}.get(kind, (kind.lower(), kind.lower() + "s"))
+        return f"{count} {word[0] if count == 1 else word[1]}"
+
+    def show_item(self) -> None:
+        selected = self.tree.selection()
+        item = self.items.get(selected[0]) if selected else None
+        if item is None:
+            self.detail.configure(text="")
+            return
+        if item["kind"] == "DOCUMENT":
+            document = item["document"]
+            self.detail.configure(text=f"{document['name']} - {document['status_words']}."
+                                       + ("" if document.get("file_present") else
+                                          "  (RUDRA's copy of this file has been deleted; the knowledge stays.)"))
+            return
+        if item["kind"] == "GROUP":
+            group = item["group"]
+            examples = "\n".join(f"  {'p.' + str(page) + ': ' if page else ''}{text}"
+                                 for page, text in group.get("examples", []))
+            self.detail.configure(text=group["meaning"] + ("\nFor example:\n" + examples if examples else ""))
+            return
+        lines = [item.get("statement") or item["title"]]
+        if item.get("printed") and item["printed"] != lines[0]:
+            lines.append("As printed: " + item["printed"])
+        if item.get("about"):
+            lines.append("About: " + ", ".join(item["about"]))
+        if item.get("document"):
+            lines.append(f"From {item['document']}" + (f", page {item['page']}" if item.get("page") else "")
+                         + (f" (stated in {item['sources']} places)" if item.get("sources", 1) > 1 else ""))
+        if item.get("quote") and item["quote"] != lines[0]:
+            lines.append(f"Quoted text: {item['quote']}")
+        if item.get("doubt"):
+            lines.append("Uncertain: " + item["doubt"] + ".")
+        if item.get("calculation") == "usable":
+            lines.append("RUDRA can calculate with this equation.")
+        elif item.get("calculation"):
+            lines.append("For calculation: " + item["calculation"] + ".")
+        self.detail.configure(text="\n".join(lines))
+
+
 class LookupPage(Page):
     key, title = "lookup", "Lookup"
-    heading = "Look up knowledge"
-    description = ("A concept by its exact name (lookup), any stored item by its identifier (query), or a keyword "
-                   "in the derived index (query --keyword). Every result carries its source.")
+    advanced = True
+    heading = "Look something up"
+    description = ("Find a concept by its exact name, an item by its identifier (like K-00000001), or any stored "
+                   "text by a word. Every result shows where it came from.")
 
     def build(self) -> None:
         px = self.window.px
         self.mode = tk.StringVar(master=self.window.root, value="name")
         modes = tk.Frame(self.frame, bg=theme.BG)
         modes.pack(anchor="w", pady=(px(8), px(8)))
-        for value, text in (("name", "Concept name"), ("identifier", "Identifier"), ("keyword", "Keyword")):
+        for value, text in (("name", "Concept name"), ("identifier", "Identifier"), ("keyword", "Word in the text")):
             ttk.Radiobutton(modes, text=text, value=value, variable=self.mode).pack(side="left", padx=(0, px(16)))
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(fill="x")
@@ -1375,25 +1995,35 @@ class LookupPage(Page):
         self.field.bind("<Return>", lambda _event: self.run())
         self.button(row, "Look up", self.run, accent=True).pack(side="left", padx=(px(8), 0))
         self.first = self.field
-        index = tk.Frame(self.frame, bg=theme.BG)
-        index.pack(fill="x", pady=(px(14), 0))
-        self.button(index, "Build keyword index", self.build_index).pack(side="left")
-        self.note(index, "  Keyword search reads data\\indexes\\index.db, rebuilt from the database by this "
-                         "button; it never changes the knowledge.").pack(side="left", fill="x")
 
     def run(self) -> bool:
-        return self.window.run_form(lambda: commands.lookup(self.mode.get(), self.value.get()))
+        if self.mode.get() != "keyword":
+            return self.window.run_form(lambda: commands.lookup(self.mode.get(), self.value.get()))
+        try:
+            search = commands.lookup("keyword", self.value.get())
+        except FormError as exc:
+            self.window.show_note(str(exc), tag="warn")
+            self.window.set_state("NOT RUN", theme.WARN)
+            return False
 
-    def build_index(self) -> bool:
-        return self.window.run_form(lambda: ["index"])
+        def shown(results: list[CommandResult]) -> None:  # the search index was brought up to date first
+            self.window.output_touched = True
+            self.window.compact.output.show_result(results[-1])
+            self.window.full.output.show_result(results[-1])
+            self.window.set_state("READY · search done" if results[-1].ok else
+                                  f"EXIT {results[-1].exit_code} · {results[-1].meaning}",
+                                  theme.OK if results[-1].ok else theme.WARN)
+
+        return self.window.submit_sequence([commands.index(), search], label="search", on_done=shown)
 
 
 class ProvenancePage(Page):
     key, title = "provenance", "Provenance"
+    advanced = True
     heading = "Where did this come from?"
-    description = ("Any stored item's sources: document, page, quote, extraction run - with the quote and the "
-                   "preserved file checked again. When there is none, RUDRA says 'Provenance unavailable.' and "
-                   "invents no citation.")
+    description = ("Any stored item's sources: the document, the page, the quote and how it was extracted - with the "
+                   "quote and the preserved file checked again. When there is none, RUDRA says so and invents no "
+                   "citation.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1405,8 +2035,9 @@ class ProvenancePage(Page):
         self.field.bind("<Return>", lambda _event: self.run())
         self.button(row, "Trace", self.run, accent=True).pack(side="left", padx=(px(8), 0))
         self.first = self.field
-        self.note(self.frame, "Identifiers look like K-00000001 (knowledge), CPT-00000001 (concept), "
-                              "REL-00000001 (relationship) or DOC-00000001 (document); Lookup shows them."
+        self.note(self.frame, "An identifier looks like K-00000001 (a piece of knowledge), CPT-00000001 (a concept), "
+                              "REL-00000001 (a relationship) or DOC-00000001 (a document). The Knowledge page "
+                              "and every answer's sources show them."
                   ).pack(fill="x", pady=(px(12), 0))
 
     def run(self) -> bool:
@@ -1415,10 +2046,10 @@ class ProvenancePage(Page):
 
 class ImportPage(Page):
     key, title = "import", "Add document"
-    heading = "Add a document to your knowledge"
-    description = ("Choose a PDF, Word, PowerPoint, Excel, EPUB, HTML, Markdown, text, CSV, RTF file, or a scanned "
-                   "image. RUDRA reads it, keeps a copy, and adds what it finds - with the exact page and quote "
-                   "behind every statement - so you can ask about it right away.")
+    heading = "Add a document"
+    description = ("Choose a PDF, Word, PowerPoint or Excel file, an e-book, a web page, a text file or a scanned "
+                   "image. RUDRA reads it, keeps a private copy, and stores what it states - with the page and the "
+                   "exact quote behind every item - so you can ask about it straight away.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1427,22 +2058,33 @@ class ImportPage(Page):
         row.pack(fill="x")
         self.field, self.pdf = self.entry(row, width=60)
         self.field.pack(side="left", fill="x", expand=True)
+        self.field.bind("<Return>", lambda _event: self.run())
         ttk.Button(row, text="Browse…", command=self.browse).pack(side="left", padx=(px(8), 0))
         self.first = self.field
-        self.button(self.frame, "Add document", self.run, accent=True).pack(anchor="w", pady=(px(14), 0))
-        self.note(self.frame, "Scanned pages and images are read with Windows' own OCR engine, on this computer. "
-                              "Text read that way is marked and treated as uncertain, never as a sure statement."
-                  ).pack(fill="x", pady=(px(12), 0))
-        advanced = tk.Frame(self.frame, bg=theme.BG)
-        advanced.pack(fill="x", pady=(px(18), 0))
-        self.label(advanced, "Advanced").pack(anchor="w")
-        self.label(advanced, "Manual of application (optional)").pack(anchor="w", pady=(px(8), px(4)))
-        manual_field, self.manual = self.entry(advanced, width=30)
+        self.button(self.frame, "Add document", self.run, accent=True).pack(anchor="w", pady=(px(12), 0))
+        self.note(self.frame, "Your original file is never changed. Scanned pages and images are read with "
+                              "Windows' own text recognition, on this computer; what it reads is marked uncertain."
+                  ).pack(fill="x", pady=(px(10), 0))
+        self.manual_open = False
+        self.manual_toggle = tk.Label(self.frame, text="Is this the manual of a program?  ▸", bg=theme.BG,
+                                      fg=theme.FAINT, font=self.window.fonts.label, cursor="hand2", anchor="w")
+        self.manual_toggle.pack(anchor="w", pady=(px(10), 0))
+        self.manual_toggle.bind("<Button-1>", lambda _event: self.toggle_manual())
+        self.manual_box = tk.Frame(self.frame, bg=theme.BG)
+        self.label(self.manual_box, "Name of the program (for example MATLAB)").pack(anchor="w", pady=(px(4), px(4)))
+        manual_field, self.manual = self.entry(self.manual_box, width=30)
         manual_field.pack(anchor="w")
-        self.button(advanced, "Set up or upgrade the knowledge database only", self.database).pack(
-            anchor="w", pady=(px(10), 0))
-        self.note(advanced, "Adding a document already does this automatically the first time; use this only to "
-                            "prepare the database before adding anything.").pack(fill="x", pady=(px(4), 0))
+        self.note(self.manual_box, "RUDRA then also learns the program's menus, commands and shortcuts from it."
+                  ).pack(fill="x", pady=(px(4), 0))
+
+    def toggle_manual(self) -> None:
+        self.manual_open = not self.manual_open
+        if self.manual_open:
+            self.manual_box.pack(fill="x", after=self.manual_toggle)
+        else:
+            self.manual_box.pack_forget()
+        self.manual_toggle.configure(text="Is this the manual of a program?  " + ("▾" if self.manual_open else "▸"))
+        self.view.fit()
 
     def browse(self) -> None:
         from app.documents.formats import SUPPORTED_EXTENSIONS
@@ -1455,19 +2097,35 @@ class ImportPage(Page):
             self.pdf.set(str(Path(chosen)))
 
     def run(self) -> bool:
+        """Adding a document is one operation from here: read it and store what it states
+        (`extract`), make it searchable (`index`), then list what was found
+        (`inventory`) so the person is told what was stored and what was not."""
+        try:
+            extract_argv = commands.extract(self.pdf.get(), self.manual.get() if self.manual_open else "")
+        except FormError as exc:
+            self.window.show_note(str(exc), tag="warn")
+            self.window.set_state("NOT RUN", theme.WARN)
+            return False
         self.window.pending_import_name = Path(self.pdf.get()).name if self.pdf.get().strip() else None
-        return self.window.run_form(lambda: commands.extract(self.pdf.get(), self.manual.get()), approve=True)
+        return self.window.submit_sequence([extract_argv, commands.index(), commands.inventory()], label="extract",
+                                           on_done=self._added, show=extract_argv)
 
-    def database(self) -> bool:
-        return self.window.run_form(lambda: ["db"], approve=True)
+    def _added(self, results: list[CommandResult]) -> None:
+        self.window.output_touched = True
+        self.window.compact.output.show_extract_summary(results)
+        self.window.full.output.show_extract_summary(results)
+        self.window.pending_import_name = None
+        text, good = commands.finished_state(results[0])
+        self.window.set_state(text, theme.OK if good else theme.WARN)
 
 
 class CommandPage(Page):
     key, title = "command", "Command"
-    heading = "Any command"
-    description = ("Everything the command line can do: type what would follow 'python -m app'. It runs "
-                   "exactly as it would there; a command that writes, reaches the Internet or acts on this "
-                   "computer is put to you first.")
+    advanced = True
+    heading = "Commands"
+    description = ("For people who want the detail: everything RUDRA's command line can do, typed here exactly as "
+                   "it would be in a terminal. A command that changes your knowledge, reaches the Internet or acts "
+                   "on this computer is put to you first.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1488,10 +2146,10 @@ class CommandPage(Page):
 
 class HelpPage(Page):
     key, title = "help", "Help"
-    heading = "Help and documents"
-    description = ("The command reference and RUDRA's own documents. docs/LIMITATIONS.md says, subsystem by "
-                   "subsystem, what is implemented, partially implemented or not implemented. Updates, voice and "
-                   "other maintenance are on the Settings page.")
+    advanced = True
+    heading = "Help"
+    description = ("How to use RUDRA, and what it can and cannot do. Updates, voice input, backup and the "
+                   "uninstaller are on the Settings page.")
 
     def build(self) -> None:
         px = self.window.px
@@ -1502,10 +2160,8 @@ class HelpPage(Page):
         self.first = reference
         for title in commands.DOCUMENTS:
             ttk.Button(row, text=title, command=lambda t=title: self.document(t)).pack(side="left", padx=(px(8), 0))
-        self.note(self.frame, f"RUDRA {VERSION}. The window runs the command line's own commands and "
-                              "shows their output unchanged; from a terminal the same commands run as "
-                              "python -m app <command> (RUDRA-CLI.exe when packaged).").pack(
-            fill="x", pady=(px(14), 0))
+        self.note(self.frame, f"RUDRA {VERSION}. From a terminal the same commands run as RUDRA-CLI.exe <command>."
+                  ).pack(fill="x", pady=(px(14), 0))
 
     def reference(self) -> bool:
         return self.window.run_form(lambda: list(commands.HELP_ARGUMENTS))
@@ -1519,28 +2175,28 @@ class BackupPage(Page):
     hidden = True  # Settings offers Export/Import with one click each; this page's own
     # methods do the work either way, so nothing here is duplicated.
     heading = "Back up and restore your knowledge"
-    description = ("Export writes your whole knowledge base - the knowledge database and the documents it came "
-                   "from - to one .rudrabackup file you can keep on a USB drive or another disk. Import restores "
-                   "such a file here or on another computer, after checking it completely.")
+    description = ("A backup holds your whole knowledge base - everything stored and the documents it came from - "
+                   "in one .rudrabackup file you can keep on a USB drive or another disk. Restoring puts such a "
+                   "file back here or on another computer, after checking it completely.")
 
     def build(self) -> None:
         px = self.window.px
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(anchor="w", pady=(px(8), 0))
-        export = self.button(row, "Export Knowledge Base…", self.export, accent=True)
+        export = self.button(row, "Back up your knowledge…", self.export, accent=True)
         export.pack(side="left")
-        self.button(row, "Import Knowledge Base…", self.restore).pack(side="left", padx=(px(8), 0))
+        self.button(row, "Restore from a backup…", self.restore).pack(side="left", padx=(px(8), 0))
         self.first = export
-        self.note(self.frame, "Importing replaces the knowledge base in this installation. RUDRA asks first, and "
+        self.note(self.frame, "Restoring replaces the knowledge base in this installation. RUDRA asks first, and "
                               "keeps the current one in its backups folder rather than deleting it. A backup made "
                               "by a newer version of RUDRA is refused until RUDRA is updated.").pack(
             fill="x", pady=(px(12), 0))
         # Dialogs, replaceable for tests: (title, initial name) -> path, and approval questions.
         self.ask_save: Callable[[str], str] = lambda initial: filedialog.asksaveasfilename(
-            parent=self.window.root, title="Export Knowledge Base", initialfile=initial, defaultextension=SUFFIX,
+            parent=self.window.root, title="Back up your knowledge", initialfile=initial, defaultextension=SUFFIX,
             filetypes=(("RUDRA backup", f"*{SUFFIX}"), ("All files", "*.*")))
         self.ask_open: Callable[[], str] = lambda: filedialog.askopenfilename(
-            parent=self.window.root, title="Import Knowledge Base",
+            parent=self.window.root, title="Restore from a backup",
             filetypes=(("RUDRA backup", f"*{SUFFIX}"), ("All files", "*.*")))
         self.ask_yes: Callable[[str, str], bool] = lambda title, message: messagebox.askyesno(
             title, message, icon="warning", parent=self.window.root)
@@ -1554,19 +2210,24 @@ class BackupPage(Page):
             return False
         destination = Path(chosen)
 
-        def work() -> ExportReport:
-            return export_knowledge(self.window.layout(), destination, app_version=VERSION, overwrite=True)
+        def work() -> tuple[ExportReport, object]:
+            report = export_knowledge(self.window.layout(), destination, app_version=VERSION, overwrite=True)
+            return report, inspect_backup(report.path)  # read the finished file back before saying it worked
 
-        def done(report: object, error: BaseException | None) -> None:
+        def done(found: object, error: BaseException | None) -> None:
             if error is not None:
-                self.show(f"Export failed. Nothing was changed.\n\n{error}", "err")
+                self.show(f"The backup could not be made. Nothing was changed.\n\n{error}", "err")
                 return
+            report, readback = found  # type: ignore[misc]
             assert isinstance(report, ExportReport)
-            self.show(f"Knowledge base exported.\n\nFile       : {report.path}\nSize       : "
+            same = readback.counts.get("knowledge_object", 0) == report.counts.get("knowledge_object", 0)
+            self.show(f"Your knowledge is backed up.\n\nFile       : {report.path}\nSize       : "
                       f"{report.size / 1024 ** 2:.2f} MB\nDocuments  : {report.documents}\n"
                       f"Knowledge  : {report.counts.get('knowledge_object', 0)} item(s), "
-                      f"{report.counts.get('concept', 0)} concept(s)\n\nCopy this file to a USB drive or another "
-                      "disk. Import it with Backup > Import Knowledge Base on any computer with RUDRA.")
+                      f"{report.counts.get('concept', 0)} concept(s)\nChecked     : the file was read back and "
+                      + ("holds the same knowledge." if same else "DOES NOT MATCH - make the backup again.")
+                      + "\n\nCopy this file to a USB drive or another disk. Restore it with Settings > "
+                        "Restore from a backup on any computer with RUDRA.", "out" if same else "err")
 
         return self.window.run_task("export", work, done)
 
@@ -1586,13 +2247,13 @@ class BackupPage(Page):
                        f"{contents.counts.get('knowledge_object', 0)} knowledge item(s), "
                        f"{contents.document_count} document(s).")
             if existing:
-                question = (f"{summary}\n\nThis installation already has a knowledge base. Importing REPLACES it "
+                question = (f"{summary}\n\nThis installation already has a knowledge base. Restoring REPLACES it "
                             "with the backup. The current knowledge base is moved to the backups folder, not "
                             "deleted.\n\nReplace the current knowledge base?")
             else:
                 question = f"{summary}\n\nRestore this backup?"
-            if not self.ask_yes("Import Knowledge Base", question):
-                self.show("Import cancelled. Nothing was changed.", "meta")
+            if not self.ask_yes("Restore from a backup", question):
+                self.show("Restore cancelled. Nothing was changed.", "meta")
                 return
 
             def work() -> RestoreReport:
@@ -1607,7 +2268,7 @@ class BackupPage(Page):
             assert isinstance(report, RestoreReport)
             checks = report.verified
             lines = [
-                "Knowledge base restored and verified.", "",
+                "Your knowledge is restored and checked.", "",
                 f"Integrity   : {checks.get('integrity')}",
                 f"Schema      : version {checks.get('schema_version')}"
                 + (f" (migrated from {report.migrated_from})" if report.migrated_from else ""),
@@ -1617,7 +2278,7 @@ class BackupPage(Page):
             ]
             if report.previous_saved_to is not None:
                 lines.append(f"Previous    : kept in {report.previous_saved_to}")
-            lines += ["", "Keyword search: rebuild the index on the Lookup page (Build keyword index)."]
+            lines += ["", "Your knowledge is back. Ask a question, or open the Knowledge page to see it."]
             self.show("\n".join(lines))
 
         return self.window.run_task("checking backup", lambda: inspect_backup(source), checked)
@@ -1762,67 +2423,98 @@ class AiPage(Page):
 
 
 class SettingsPage(Page):
-    """The home for maintenance (master specification): updates, voice, backup, restore,
-    optional AI and uninstalling, in one place - not scattered as separate top-level pages.
+    """The home for maintenance: updates, voice, backup, restore, optional AI and uninstalling,
+    in one place - not scattered as separate top-level pages.
 
     Backup and AI keep their own, fully working pages (`BackupPage`, `AiPage`); this page
-    either calls their methods directly (Export/Import, one click each) or opens them with
+    either calls their methods directly (Back up / Restore, one click each) or opens them with
     `view.select` for the few things that need more than one field (choosing an AI provider
     and model). Nothing here is a second implementation of either.
     """
 
     key, title = "settings", "Settings"
     heading = "Settings"
-    description = ("Updates, voice input, backing up and restoring your knowledge, optional AI assistance, and "
-                   "uninstalling RUDRA. Diagnostics and every other command are under Advanced in the sidebar.")
+    description = "Updates, voice input, backing up and restoring your knowledge, optional AI assistance and uninstalling."
 
     def build(self) -> None:
         px = self.window.px
+        grid = tk.Frame(self.frame, bg=theme.BG)
+        grid.pack(fill="x", pady=(px(8), 0))
+        grid.grid_columnconfigure(1, weight=1)
+        self._row = 0
 
-        def section(text: str, *, first: bool = False) -> None:
-            if not first:
-                tk.Frame(self.frame, bg=theme.LINE, height=1).pack(fill="x", pady=(px(16), px(8)))
-            self.label(self.frame, text).pack(anchor="w")
+        def section(name: str) -> tk.Frame:
+            """A label on the left; the controls (and a note under them) on the right."""
+            if self._row:
+                tk.Frame(grid, bg=theme.LINE, height=1).grid(row=self._row, column=0, columnspan=2, sticky="ew",
+                                                              pady=(px(6), px(6)))
+                self._row += 1
+            tk.Label(grid, text=theme.spaced(name), bg=theme.BG, fg=theme.FAINT, font=self.window.fonts.code,
+                     anchor="nw", width=18, justify="left").grid(row=self._row, column=0, sticky="nw",
+                                                                  pady=(px(5), 0))
+            holder = tk.Frame(grid, bg=theme.BG)
+            holder.grid(row=self._row, column=1, sticky="ew")
+            self._row += 1
+            return holder
 
-        section("Application", first=True)
-        general = tk.Frame(self.frame, bg=theme.BG)
-        general.pack(fill="x", pady=(px(8), 0))
-        check = self.button(general, "Check for updates", self.check_updates, accent=True)
+        def line(holder: tk.Frame) -> tk.Frame:
+            row = tk.Frame(holder, bg=theme.BG)
+            row.pack(fill="x", pady=(px(2), 0))
+            return row
+
+        updates = section("Updates")
+        row = line(updates)
+        check = self.button(row, "Check for updates", self.check_updates, accent=True)
         check.pack(side="left")
         self.first = check
         self.automatic = tk.BooleanVar(master=self.window.root, value=self._automatic_updates())
-        ttk.Checkbutton(general, text="Check automatically (at most once a day)", variable=self.automatic,
+        ttk.Checkbutton(row, text="Check automatically (at most once a day)", variable=self.automatic,
                         command=self.set_automatic_updates).pack(side="left", padx=(px(12), 0))
 
-        section("Voice / input")
-        voice = tk.Frame(self.frame, bg=theme.BG)
-        voice.pack(fill="x", pady=(px(8), 0))
-        self.mic = MicButton(self.window, voice, self._heard, idle="Test microphone")
+        voice = section("Voice")
+        row = line(voice)
+        self.mic = MicButton(self.window, row, self._heard, idle="Test microphone")
         self.mic.button.pack(side="left")
-        self.mic_status = tk.Label(voice, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label, anchor="w")
+        self.mic_status = tk.Label(row, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label, anchor="w")
         self.mic_status.pack(side="left", padx=(px(10), 0))
-        self.note(self.frame, "The same microphone button appears beside Ask's question field, to dictate instead "
-                              "of typing.").pack(fill="x", pady=(px(4), 0))
+        self.note(voice, "Click, speak, and stop talking (or click again) when you are done. Speech is recognized on "
+                         "this computer by an offline model - nothing is recorded or sent anywhere. The same Speak "
+                         "button sits beside the question on the Ask page.", wrap=560).pack(fill="x", pady=(px(2), 0))
 
-        section("Data")
-        data = tk.Frame(self.frame, bg=theme.BG)
-        data.pack(fill="x", pady=(px(8), 0))
-        self.button(data, "Back up your knowledge", self.backup, accent=True).pack(side="left")
-        self.button(data, "Restore from a backup", self.restore).pack(side="left", padx=(px(8), 0))
-        self.note(self.frame, "A backup is one file with everything you've added to RUDRA - keep it on a USB "
-                              "drive or another disk. Restoring asks first and keeps what is currently here "
-                              "(in the backups folder) rather than deleting it.").pack(fill="x", pady=(px(4), 0))
+        row = line(voice)
+        tk.Label(row, text="Words to spell as written", bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label
+                 ).pack(side="left")
+        self.words_field, self.words = self.entry(row, "", width=34)
+        self.words_field.pack(side="left", padx=(px(8), 0))
+        self.button(row, "Save", self.save_words).pack(side="left", padx=(px(8), 0))
+        self.words_status = tk.Label(row, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.label, anchor="w")
+        self.words_status.pack(side="left", padx=(px(10), 0))
+        self.note(voice, "Names and terms speech often gets wrong, separated by commas (for example: Kaushik, "
+                         "Anantham). RUDRA tells the recognizer how you write them. They stay on this computer.",
+                  wrap=560).pack(fill="x", pady=(px(2), 0))
 
-        section("Optional AI assistance")
-        self.ai_status = tk.Label(self.frame, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.body, anchor="w")
-        self.ai_status.pack(fill="x", pady=(px(8), 0))
-        self.button(self.frame, "Manage AI assistance…", self.open_ai).pack(anchor="w", pady=(px(8), 0))
+        data = section("Backup")
+        row = line(data)
+        self.button(row, "Back up your knowledge", self.backup, accent=True).pack(side="left")
+        self.button(row, "Restore from a backup", self.restore).pack(side="left", padx=(px(8), 0))
+        self.note(data, "A backup is one file holding everything you have added - keep it on a USB drive or "
+                        "another disk. Restoring asks first and keeps what is here now in the backups folder "
+                        "instead of deleting it.", wrap=560).pack(fill="x", pady=(px(2), 0))
 
-        section("Application management")
-        ttk.Button(self.frame, text="Uninstall RUDRA…", command=self.uninstall).pack(anchor="w", pady=(px(8), 0))
-        self.note(self.frame, "This runs Windows' own uninstaller for RUDRA - the same one Settings > Apps would "
-                              "use. Your knowledge base lives in your user profile and is kept either way."
-                  ).pack(fill="x", pady=(px(4), 0))
+        ai = section("AI assistance")
+        row = line(ai)
+        self.ai_status = tk.Label(row, bg=theme.BG, fg=theme.MUTED, font=self.window.fonts.body, anchor="w")
+        self.ai_status.pack(side="left")
+        self.button(row, "Manage…", self.open_ai).pack(side="left", padx=(px(12), 0))
+        self.note(ai, "Optional. RUDRA works fully without it; it is only used if you turn it on with your own key.",
+                  wrap=560).pack(fill="x", pady=(px(2), 0))
+
+        remove = section("Uninstall")
+        row = line(remove)
+        ttk.Button(row, text="Uninstall RUDRA…", command=self.uninstall).pack(side="left")
+        self.note(remove, "Runs Windows' own uninstaller for RUDRA. Your knowledge is kept in your user profile "
+                          "either way.", wrap=560
+                  ).pack(fill="x", pady=(px(2), 0))
 
         # Dialogs, replaceable for tests.
         self.ask_yes: Callable[[str, str], bool] = lambda title, message: messagebox.askyesno(
@@ -1840,6 +2532,7 @@ class SettingsPage(Page):
         super().focus()
 
     def refresh(self) -> None:
+        self.load_words()
         settings = self.window.ai()
         if settings.active and settings.provider in PROVIDERS:
             self.ai_status.configure(text=f"On: {PROVIDERS[settings.provider].name}.", fg=theme.OK)
@@ -1861,6 +2554,25 @@ class SettingsPage(Page):
         self.window.check_for_updates(manual=True)
 
     # ---- Voice / input
+
+    def load_words(self) -> None:
+        from app.voice import words as voice_words
+
+        self.words.set(", ".join(voice_words.load(self.window.project_root / "config")))
+
+    def save_words(self) -> bool:
+        """Keep the words the person typed (tidied) for the recognizer to spell as written."""
+        from app.voice import words as voice_words
+
+        try:
+            kept = voice_words.save(self.window.project_root / "config", self.words.get())
+        except OSError as exc:
+            self.words_status.configure(text=f"Could not save: {exc}", fg=theme.WARN)
+            return False
+        self.words.set(", ".join(kept))
+        self.words_status.configure(text=f"Saved {len(kept)} word{'s' if len(kept) != 1 else ''}." if kept
+                                    else "No words kept.", fg=theme.OK)
+        return True
 
     def _heard(self, text: str) -> None:
         self.mic_status.configure(text=f'Heard: "{text}"', fg=theme.OK)
@@ -1900,5 +2612,5 @@ class SettingsPage(Page):
         self.quit()
 
 
-PAGES = (StatusPage, AskPage, LookupPage, ProvenancePage, ImportPage, SettingsPage, BackupPage, AiPage,
-         CommandPage, HelpPage)
+PAGES = (AskPage, ImportPage, KnowledgePage, SettingsPage, StatusPage, LookupPage, ProvenancePage, CommandPage,
+         HelpPage, BackupPage, AiPage)

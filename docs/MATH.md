@@ -68,3 +68,42 @@ raised and lowered scripts, radicals over their radicand, big operators with lim
 matrices and cases in their delimiters, aligned lines, the equation number at the right —
 and breaks a long equation across lines to fit the answer. It uses fonts that ship with
 Windows.
+
+### A calculation as a worked solution
+
+A calculation is not shown as a line of linear text. For `solve` and `calculate` answers
+the window sets it out as a textbook worked example:
+
+- **Result** — the quantity and its value on a card of its own, with the unit upright
+  (*I = 0.4 A*). A rounded value says so (*≈*, "rounded to 6 significant figures; the
+  exact value is 1/3").
+- **Given** — each value you supplied, as an equation (*V = 12 V*, *R₁ = 10 Ω*), with
+  the name your documents give the quantity.
+- **Working** — for each step, the equation as used (*I = V ⁄ R*, as a stacked fraction),
+  when it was turned around the stored equation it came from, and the same equation with
+  its values put in, ending in the value the step gave:
+
+      I = 12 V / 30 Ω = 0.4 A        (the fraction stacked, units upright)
+
+- **A check line** — "Checked: an independent evaluation reproduced every step", or a
+  plain warning when it did not.
+
+Subscripted symbols are set as such (*R*<sub>total</sub>, *V*<sub>out</sub>); large
+numbers are grouped in threes (*20 000 Ω*) and powers of ten written as powers
+(*1.5 × 10⁷ Hz*). This is presentation only: every symbol, number and unit is the one the
+command returned, nothing is recomputed or re-rounded, and the plain lines of the same
+answer are unchanged in the command line, in the JSON and in **Copy**. A substitution the
+display does not recognise is shown as the command wrote it.
+
+LaTeX written in the middle of any answer — a quotation from your Markdown or LaTeX
+sources — is typeset where it stands: `\( … \)`, `\[ … \]`, `$$ … $$` and `$ … $` are
+never shown as delimiters (a dollar amount such as "$5 and $6" is left alone), and a
+formula in a sentence that is not fenced (*"where E = \frac{1}{2} m v^{2} is the
+energy"*) is found and typeset without the words around it. **View Sources** shows a stored
+equation typeset; a quotation from the document is shown exactly as the document has it,
+and when it is written in LaTeX the typeset form follows it.
+
+The display is RUDRA's own typesetter (`app/ui/gui/mathrender.py`, standard library only,
+drawn on a Tk canvas with Cambria Math from Windows). The open-source alternatives that
+were considered for it - and why none was adopted - are in the "Open-source review" in
+[DESIGN.md](DESIGN.md).

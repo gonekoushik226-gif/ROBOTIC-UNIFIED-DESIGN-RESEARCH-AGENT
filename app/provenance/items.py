@@ -229,7 +229,7 @@ class ProvenanceService:
         return self._answer(
             reading, identifier, kind, ProvenanceStatus.EXCLUDED,
             f"{identifier} is stored {status.value}: it is excluded from use, and its provenance is "
-            "not shown (P9-23).",
+            "not shown.",
         )
 
     def _unavailable(self, reading: _Reading, identifier: str, kind: EntityKind, reason: str,
@@ -241,7 +241,7 @@ class ProvenanceService:
         if total == 0:
             return "No evidence is stored for it; no citation exists, and none is made."
         return (f"Its {total} stored evidence row(s) come only from sources not authorized in the "
-                f"requested scope ({reading.scope.value}); they are withheld and counted, never shown (P9-5).")
+                f"requested scope ({reading.scope.value}); they are withheld and counted, never shown.")
 
     def _cited(self, reading: _Reading, identifier: str, kind: EntityKind, item: object,
                citations: tuple[Citation, ...], *, subject_id: str, history: History | None = None,
@@ -332,7 +332,7 @@ class ProvenanceService:
             reason = self._no_evidence_reason(reading, total)
             if bases:
                 reason = (f"Its {len(bases)} recorded inference basis(es) rest on evidence not "
-                          f"authorized in the requested scope ({reading.scope.value}); withheld (P9-5).")
+                          f"authorized in the requested scope ({reading.scope.value}); withheld.")
             return self._unavailable(reading, identifier, kind, reason)
         history = History(lifecycle_status=relationship.lifecycle_status.value)
         return self._cited(reading, identifier, kind, relationship, citations, subject_id=identifier,
@@ -375,12 +375,12 @@ class ProvenanceService:
         if not shown:
             return self._unavailable(reading, identifier, kind,
                                      "Neither claim has evidence in the requested scope; both are "
-                                     "withheld (P9-5).", claims=claims)
+                                     "withheld.", claims=claims)
         checks = tuple(check for c in shown for check in c.checks)
         return self._answer(
             reading, identifier, kind, ProvenanceStatus.AVAILABLE,
             f"Provenance available for {len(shown)} of the conflict's 2 claims; the conflict is "
-            "shown with both claims, neither chosen (section 229).",
+            "shown with both claims, neither chosen.",
             item=conflict, claims=claims, checks=checks,
         )
 
@@ -415,7 +415,7 @@ class ProvenanceService:
         if not in_scope:
             return self._unavailable(reading, identifier, kind,
                                      "No source of it is authorized in the requested scope "
-                                     f"({reading.scope.value}); it is withheld (P9-5).")
+                                     f"({reading.scope.value}); it is withheld.")
         documents = reading.documents([document_id] if document_id else [])
         runs = queries.runs_for_document(reading.connection, document_id) if document_id else ()
         checks = tuple(d.file for d in documents)

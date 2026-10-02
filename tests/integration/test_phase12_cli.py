@@ -86,7 +86,7 @@ def test_phase_12_adds_exactly_the_provenance_command():
     before = {"start", "env", "config", "paths", "db", "extract", "classify", "lookup", "review",
               "edition", "merge", "query", "index", "reason", "calculate", "version"}
     # Phase 13 adds `interpret` (ADR 0045 P13-14); Phase 12's own addition is unchanged.
-    assert set(cli_main._COMMANDS) - {"interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"provenance"}
+    assert set(cli_main._COMMANDS) - {"interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"provenance"}
 
 
 # ------------------------------------------------------------ stored items

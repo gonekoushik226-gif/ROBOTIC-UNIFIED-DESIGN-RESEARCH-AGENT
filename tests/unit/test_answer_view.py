@@ -98,7 +98,7 @@ def test_the_answer_is_split_from_its_sources():
     (part,) = document.parts
     assert part.lines == ("Definition: Resistance is the opposition to current.",)
     assert dict(part.extras)["Missing information"] == ("Voltage",)  # no database identifier in the answer
-    assert dict(part.extras)["Next steps"] == ("Import a document that covers it (Import page).",)
+    assert dict(part.extras)["Next steps"] == ("Add a document that covers it (the Add document page).",)
     assert part.details.knowledge_ids() == ("K-00000001",)
     plain = answerview.plain_text(document)
     for hidden in ("DOC-", "CPT-", "K-0", "p.1", "query"):

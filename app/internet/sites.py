@@ -54,11 +54,11 @@ def site(url: str) -> Site:
         raise refuse(f"{url!r} is not a URL.", str(exc)) from None
     scheme = parts.scheme.casefold()
     if scheme not in _DEFAULT_PORTS:
-        raise refuse(f"{url!r} is not an http or https URL.", "Only web pages are retrieved (ADR 0050 P18-4).")
+        raise refuse(f"{url!r} is not an http or https URL.", "Only web pages are retrieved.")
     if not parts.hostname:
         raise refuse(f"{url!r} names no host.", "Give the full address of one page.")
     if parts.username or parts.password:
-        raise refuse("The URL carries credentials.", "RUDRA never sends credentials (section 245).")
+        raise refuse("The URL carries credentials.", "RUDRA never sends credentials.")
     path = parts.path or "/"
     prefix = path[: path.rfind("/") + 1]
     clean = urlunsplit((scheme, parts.netloc, path, parts.query, ""))

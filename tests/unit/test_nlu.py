@@ -49,7 +49,7 @@ def test_calculate_the_drain_current_is_calculation_and_knowledge_reasoning_with
     assert intent.intent_type == "CALCULATE" and intent.target == "drain current"
     assert intent.task_classes == ("CALCULATION", "KNOWLEDGE_REASONING")
     assert intent.command is None  # no formula or value is guessed
-    assert any("formulas" in m for m in intent.missing)
+    assert any("the values you know" in m for m in intent.missing)
     assert intent.routes == (("reason", "drain current"),)
 
 
@@ -113,14 +113,48 @@ def test_a_calculation_reads_is_as_explicit_an_assignment_as_an_equals_sign():
     assert intent.command == ("calculate", "I", "--formula", "I = V / R", "--input", "V=10 V", "--input", "R=5 Ω")
 
 
-def test_a_calculation_with_only_input_values_and_no_equals_sign_still_reaches_given_parsing():
-    """"Calculate the current if R1 is 10 ohms, R2 is 20 ohms and V is 10 volts": every
-    value is read, but RUDRA still never chooses the formula for the user (N2)."""
+def test_a_calculation_with_only_values_is_for_rudra_to_solve_from_the_documents():
+    """"Calculate the current if R1 is 10 ohms, R2 is 20 ohms and V is 10 volts": every value is
+    read, in the units the engine reads, and RUDRA chooses the equations (the solve command)."""
     _, intent = _one("Calculate the current if R1 is 10 ohms, R2 is 20 ohms and V is 10 volts.")
-    assert intent.status is S.INCOMPLETE and intent.command is None
-    assert any("symbol that stands for 'current'" in m for m in intent.missing)
-    assert any("the formulas" in m for m in intent.missing)
-    assert set(p for name, p in intent.parameters if name == "input") == {"R1=10 ohms", "R2=20 ohms", "V=10 volts"}
+    assert intent.status is S.INTERPRETED
+    assert intent.command == ("solve", "current", "--input", "R1=10 Ω", "--input", "R2=20 Ω", "--input", "V=10 V")
+    assert set(p for name, p in intent.parameters if name == "input") == {"R1=10 Ω", "R2=20 Ω", "V=10 V"}
+
+
+@pytest.mark.parametrize("text, target, inputs", [
+    ("Calculate I when V = 10 V and R = 5 Ω", "I", ["V=10 V", "R=5 Ω"]),
+    ("Find the output voltage given Vin = 12 V, R1 = 10 kilohms and R2 = 4.7 kilohms", "output voltage",
+     ["Vin=12 V", "R1=10 kΩ", "R2=4.7 kΩ"]),
+    ("What is the power if the voltage is 10 volts and the current is 2 amps?", "power", ["voltage=10 V", "current=2 A"]),
+    ("What is I when V equals 10 V and R equals 5 ohms", "I", ["V=10 V", "R=5 Ω"]),
+    ("If V = 10 V and R = 5 Ω, what is the current?", "current", ["V=10 V", "R=5 Ω"]),
+    ("Given a resistance of 5 ohms and a voltage of 10 volts, calculate the current", "current",
+     ["resistance=5 Ω", "voltage=10 V"]),
+    ("Compute P for V = 3 and I = 4", "P", ["V=3", "I=4"]),
+])
+def test_natural_calculation_questions_become_solve_requests(text, target, inputs):
+    _, intent = _one(text)
+    assert intent.status is S.INTERPRETED, intent.missing
+    assert intent.command[:2] == ("solve", target)
+    assert [intent.command[i + 1] for i in range(2, len(intent.command), 2)] == inputs
+
+
+def test_a_calculation_with_formulas_still_uses_exactly_those_formulas():
+    _, intent = _one("Calculate I given I = V / R, V = 10 V and R = 5 ohms")
+    assert intent.command == ("calculate", "I", "--formula", "I = V / R", "--input", "V=10 V", "--input", "R=5 Ω")
+
+
+@pytest.mark.parametrize("text", ["What is resistance when it is hot?", "What is gain at high frequency?",
+                                  "What is the current in a series circuit?"])
+def test_a_what_is_question_without_a_value_stays_a_knowledge_question(text):
+    _, intent = _one(text)
+    assert intent.intent_type == "QUERY_CONCEPT"
+
+
+def test_a_calculation_with_nothing_known_says_what_it_needs():
+    _, intent = _one("Calculate the output voltage")
+    assert intent.status is S.INCOMPLETE and any("values you know" in m for m in intent.missing)
 
 
 @pytest.mark.parametrize(

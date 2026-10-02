@@ -27,7 +27,7 @@ from app.query.traversal import label
 
 NOTHING_STORED = (
     "No concept-equivalence record and no source-stated EQUIVALENT_TO edge is stored for "
-    "the resolved concept(s) (P9-17). Records are written by stage 15 (extractor version "
+    "the resolved concept(s). Records are written by stage 15 (extractor version "
     "4) or by `merge`; the absence of a record is not evidence that no equivalence exists."
 )
 NOTHING_IN_SCOPE = (

@@ -48,21 +48,20 @@ from app.storage import queries
 from app.storage.repository import Repository
 
 INDEX_NOT_USED = (
-    "not used: this mode reads knowledge.db only and never opens the derived index "
-    "(ADR 0037 P9-29)"
+    "not used: this mode reads knowledge.db only and never opens the derived index"
 )
 EXACT_IDENTITY = (
     "Only concepts named exactly so were resolved: the name is matched by D-30 "
     "normalisation (NFKC, case folding, whitespace) against every ACTIVE alias, with no "
     "plural folding or stemming; a differently named concept is a different concept "
-    "unless a source states it equivalent (ADR 0036 P9-11, P9-12)."
+    "unless a source states it equivalent."
 )
 D1_SCOPE = (
     "Equations, variables and examples - and units, rules and procedures - are listed "
     "only where a stored edge links them to a concept; extraction records no such edge, "
-    "so section 199 is PARTIALLY IMPLEMENTED for those categories (D1, ADR 0035 P9-3)."
+    "so section 199 is PARTIALLY IMPLEMENTED for those categories."
 )
-NOT_WIDENED = "Widening over stored equivalence data was not requested (D2, ADR 0035 P9-4)."
+NOT_WIDENED = "Widening over stored equivalence data was not requested."
 
 
 class QueryEngine:
@@ -161,7 +160,7 @@ def _concept_mode(context: QueryContext) -> dict:
             "(no evidence from an authorised source in scope)"
         )
     if shown > 1:
-        message += "; every one is shown and none was chosen (section 97)"
+        message += "; every one is shown and none was chosen"
     return _concept_answer(context, section, message + ".", (EXACT_IDENTITY, *plural_note))
 
 

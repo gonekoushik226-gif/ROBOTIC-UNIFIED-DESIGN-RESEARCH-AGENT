@@ -132,7 +132,7 @@ def test_phase_10_adds_exactly_the_reason_command():
     # delegation of 2026-09-26, PHASE_11.md section 16), and Phase 12 adds `provenance` (ADR
     # 0044 P12-15, P12-16); Phase 10's own addition is unchanged.
     # Phase 13 adds `interpret` (ADR 0045 P13-14).
-    assert set(cli_main._COMMANDS) - {"calculate", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source"} == before | {"reason"}
+    assert set(cli_main._COMMANDS) - {"calculate", "provenance", "interpret", "act", "do", "procedure", "manual", "research", "diagram", "voice", "ask", "source", "solve", "inventory"} == before | {"reason"}
 
 
 # ------------------------------------------------------- section 201 through the command

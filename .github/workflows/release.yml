@@ -1,6 +1,6 @@
 name: Release
 
-# Builds, tests and publishes a DRAFT release for a version tag (v0.1.0, ...).
+# Builds, tests and publishes a DRAFT release for a version tag (v1.0.0, ...).
 # The draft is published by hand after review; only published stable releases are
 # offered by RUDRA's update notice.
 
@@ -29,6 +29,9 @@ jobs:
 
       - name: Install the pinned build requirements
         run: python -m pip install -r requirements/build.txt
+
+      - name: Fetch the offline speech recogniser (pinned, SHA-256 verified)
+        run: python windows/fetch_speech.py
 
       - name: Read the application version
         run: |

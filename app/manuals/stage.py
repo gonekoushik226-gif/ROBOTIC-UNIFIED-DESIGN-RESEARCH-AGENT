@@ -65,7 +65,7 @@ class ManualStage:
         if declaration is None:
             raise InvalidInputError.of(
                 f"{document_id} is not declared an application manual.",
-                "The manual stage runs only over a document the user declared (ADR 0049 P17-2).",
+                "The manual stage runs only over a document the user declared.",
                 stage="manuals.stage", data_changed=False, retry_safe=True,
                 next_options=(f'python -m app extract --re-extract {document_id} --manual "Application name"',),
             )

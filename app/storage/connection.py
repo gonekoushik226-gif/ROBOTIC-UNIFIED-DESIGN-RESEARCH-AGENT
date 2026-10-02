@@ -137,15 +137,15 @@ def _connect_read_only(path: Path) -> sqlite3.Connection:
     """
     if not path.is_file():
         raise StorageError.of(
-            "There is no knowledge database to read.",
-            f"No database file exists at {path}. A read-only open never creates one.",
+            "RUDRA has no knowledge yet: no document has been added.",
+            f"There is no knowledge database at {path}; reading never creates one.",
             stage="storage.connect.read_only",
             missing=(str(path),),
             data_changed=False,
             retry_safe=True,
             next_options=(
-                "Check that --project-root names the intended project.",
-                "Import a document first: python -m app extract <path-to-pdf>",
+                "Add a document first (the Add document page, or: extract <path-to-document>).",
+                "If you expected knowledge here, check that RUDRA is using the right data folder.",
             ),
         )
     uri = path.resolve().as_uri() + "?mode=ro"

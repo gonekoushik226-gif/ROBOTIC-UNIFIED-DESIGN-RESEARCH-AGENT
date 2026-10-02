@@ -77,13 +77,21 @@ the download, upgrade and uninstall.
   opens where it came from: the document, the page, the quoted text, the file's
   fingerprint check and the knowledge items the answer rests on, with a button to open
   the source document at that page.
+- **A list of what it knows.** The **Knowledge** page shows every concept, definition,
+  equation, variable and more that was stored from your documents, the page and quoted text
+  behind each, how sure RUDRA is of it — and what was found but *not* stored, and why.
 - **Textbook mathematics**, typeset from a structured, searchable notation (see
   [Mathematics](#mathematics)).
-- **Calculation with units, asked for naturally.** Exact rational arithmetic with SI units
-  and dimension checks, every step shown — through Ask, the same as any other question, not
-  a separate page.
-- **Speak instead of typing.** A microphone button beside Ask dictates your question with
-  Windows' own speech recognition; you can edit the words before sending.
+- **Calculation that chooses its own equations.** Ask *"Calculate the current when
+  V = 10 V and R = 5 Ω"* and RUDRA finds the equations your documents state, chains them in
+  the right order (turning an equation around where needed), calculates exactly with SI units
+  and dimension checks, cross-checks other routes, verifies the result independently and
+  shows every step and its source — through Ask, the same as any other question, not a
+  separate page.
+- **Speak instead of typing.** A microphone button beside Ask dictates your question. Speech
+  is recognized on your computer by an open-source Whisper model - offline, no account,
+  nothing recorded or sent anywhere - and you can edit the words before sending. See
+  [docs/VOICE.md](docs/VOICE.md).
 - **Reasoning over stored relationships**, conflict detection between sources, and a
   per-item provenance trace that re-checks the quoted text and the preserved file.
 - **Backup, restore and uninstall**, from one Settings page.
@@ -100,33 +108,60 @@ speech input. Several of these are only partly implemented; see
 ### First start
 
 RUDRA opens as a small assistant window: a status line, the latest answer and one input
-box. On first start it creates its data folder. **Full window** opens the full interface:
-**Ask**, **Add document** and **Settings** for everyday use, with Status, Lookup,
-Provenance, Command and Help grouped as Advanced for when you want the detail underneath.
+box. On first start it creates its data folder and, while it is empty, tells you to add a
+document. **Full window** opens the full interface: **Ask**, **Add document**, **Knowledge**
+and **Settings** for everyday use, with Status, Lookup, Provenance, Command and Help grouped
+as *Advanced* for when you want the detail underneath.
 
 ### Adding a document
 
 **Full window → Add document**, choose a file with **Browse…**, then **Add document**.
-RUDRA asks before it writes to your knowledge base, copies the document into its own store
-(your original is never changed), and extracts its knowledge. You can ask about it right
-away. Pages without a text layer are read with Windows' own OCR when it is available; a
-short plain-language summary appears when it is done ("Added to your knowledge base", or
-"...with some extraction warnings"), with the technical detail - document ID, page counts,
-any issues - one click away behind **Details**.
+RUDRA copies the document into its own store (your original is never changed), reads it,
+stores what it states and makes it searchable, so you can ask about it straight away. Pages
+without a text layer are read with Windows' own OCR when it is available. When it is done
+it tells you, in words, what it found: *what was stored* (for example "66 definitions, 524
+equations"), what was *already known* from other evidence, and what was found but *not
+stored* and why ("177 equations that looked broken - a fraction or integral split across
+lines"). **See what was stored** opens the Knowledge page for that document; the technical
+detail - document ID, page counts, issues - is one click away behind **Details**.
+
+### What RUDRA knows
+
+**Knowledge** lists, for each document, what was stored, linked and not stored, and lets you
+browse every concept, definition, equation, variable, unit, property, rule, relationship,
+example and procedure with the document and page it came from, the quoted text and how sure
+RUDRA is ("as printed", or *uncertain* with the reason). For equations it also says whether a
+calculation can use them, and why not when it cannot (an integral, a derivative, a fraction a
+PDF flattened). Worked numeric examples such as "V = 10 V" and question-bank material are
+deliberately not stored as knowledge.
 
 ### Asking questions, including calculations
 
 Type a question in the assistant's input box or on the **Ask** page - or click the
-microphone button beside it, speak, and edit the recognized words before sending. The
-answer appears by itself. Lines resting on uncertain recognition are marked **Uncertain**
+microphone button beside it, speak (it stops listening when you stop talking, or click it
+again), and edit the recognized words before sending - a reading the recognizer was unsure of
+is flagged **CHECK THE WORDS**, and names it gets wrong can be added under Settings > Voice.
+The answer appears by itself. Lines resting on uncertain recognition are marked **Uncertain**
 with the reason, for example *"recognized by OCR from a scanned page; compare it with the
 source"*. A question that names nothing (*"summarize this section"*) is answered with what
 is missing, never with a guess.
 
 There is no separate Calculate page: ask RUDRA to calculate the same way you would ask
-anything else, stating the formula and the values in the one sentence - for example
-*"Calculate I given I = V / R, V = 10 V and R = 5 Ω."* RUDRA never chooses a formula for
-you; if one is missing it says so.
+anything else. State what you want and what you know — *"Calculate the current when V = 10 V
+and R = 5 Ω"*, *"What is the power if the voltage is 10 volts and the current is 2 amps?"*,
+*"If R1 = 10 kΩ and R2 = 4.7 kΩ, find the equivalent resistance"* — and RUDRA chooses the
+equations itself from your documents: one, or several in the order their values flow
+(finding Rtotal from R1 and R2 before using it in a second equation), turning an equation
+around where the question needs it (`V = I R` also gives `I = V / R`). It shows the route,
+each substitution, the independent check and the source of every equation.
+
+Name a quantity by the **symbol** your documents use (`V`, `Rtotal`) or by a **name they
+explain** ("where V is the voltage" lets you say "the voltage"). If a document never says
+what a symbol means, RUDRA says so rather than guess. If the stored equations cannot give the
+answer it names what is missing; if two stored equations give different values it shows both
+and chooses neither; an equation read from a PDF page's text layer is used only when no exact
+one will do, and is marked *uncertain*. If you state the formulas yourself (*"Calculate I given
+I = V / R, V = 10 V and R = 5 Ω"*), those are the formulas used.
 
 ### Viewing sources
 
@@ -164,7 +199,10 @@ multi-line derivations, accents, binomials, equation numbers and long equations 
 across lines. Equations come from Word (Office Math), web pages and EPUB (MathML), and
 from PDF pages, where RUDRA rebuilds display equations from where the page places each
 glyph. A PDF equation whose layout is ambiguous is kept as the page printed it and marked
-uncertain. See [docs/MATH.md](docs/MATH.md).
+uncertain. A calculation is shown as a worked solution: the result on its own card, the
+values given, and each step as an equation and the equation with its values put in (fractions
+stacked, units upright, subscripts lowered), with the check on the result. See
+[docs/MATH.md](docs/MATH.md).
 
 ## Backing up and moving your knowledge base
 
@@ -180,12 +218,6 @@ is checked completely before anything changes; an existing knowledge base is onl
 after you confirm, and it is moved aside, not deleted. A backup from a newer RUDRA is
 refused; one from an older RUDRA is upgraded. See
 [docs/BACKUP_FORMAT.md](docs/BACKUP_FORMAT.md).
-
-## Uninstalling
-
-**Settings → Uninstall RUDRA** starts the same uninstaller Windows Settings → Apps would
-use (there is no second, separate uninstall path). Your knowledge base lives in your user
-profile and is never removed by uninstalling or upgrading the program.
 
 ## Optional AI assistance
 
@@ -214,6 +246,9 @@ Details: [docs/AI_PRIVACY.md](docs/AI_PRIVACY.md).
   you ask for**, one named page at a time, and **AI assistance you turned on**.
 - Imported documents are copied into RUDRA's own store; your originals are never modified
   or deleted.
+- Your voice stays on your computer. Speech is recognized offline; microphone audio is held in
+  memory only while it is being recognized, is never written to disk and is never sent
+  anywhere, and RUDRA listens only after you click the button.
 
 ## Updates
 
@@ -227,7 +262,7 @@ update, run the newer installer — your knowledge base is kept.
 
 Everything except the update check, web research and optional AI assistance works
 without an Internet connection: importing (OCR included), questions, calculation,
-provenance, formula display, backup and restore. An update check that cannot reach GitHub
+provenance, formula display, speaking to RUDRA, backup and restore. An update check that cannot reach GitHub
 fails silently.
 
 ## Where your data is stored
@@ -244,13 +279,14 @@ fails silently.
 | &nbsp;&nbsp;Settings and logs | `%LOCALAPPDATA%\RUDRA\config\`, `%LOCALAPPDATA%\RUDRA\logs\` |
 | AI keys (if you add one) | Windows Credential Manager, entries `RUDRA/ai/<provider>` |
 
-Do not copy or edit `knowledge.db` while RUDRA is running — use **Export Knowledge
-Base** instead.
+Do not copy or edit `knowledge.db` while RUDRA is running — use **Settings → Back up your
+knowledge** instead.
 
 ## Uninstalling
 
-Uninstall from **Settings → Apps → Installed apps**, or with *Uninstall RUDRA* in the
-Start Menu. This removes the program and its shortcuts. **Your data folder is kept**, so
+Use **Settings → Uninstall RUDRA** in the window (it starts the same uninstaller as the
+others), **Settings → Apps → Installed apps** in Windows, or *Uninstall RUDRA* in the Start
+Menu. This removes the program and its shortcuts. **Your data folder is kept**, so
 reinstalling continues where you left off; delete `%LOCALAPPDATA%\RUDRA` yourself to
 remove your knowledge base too.
 
@@ -267,6 +303,10 @@ most important limits:
   geometry settles every glyph.
 - **OCR** uses Windows' own engine, which reports no confidence; everything it reads is
   treated as uncertain. Handwriting and equations in scanned images are not reconstructed.
+- **Calculation uses only what your documents state.** RUDRA chooses among your stored
+  equations but never invents one; it can use equations that read as plain arithmetic (in a
+  real engineering textbook, about a third of the equations found), not calculus or
+  simultaneous systems, and says what is missing when they do not suffice.
 - **The question interpreter is rule-based.** A question outside its patterns is reported
   as not understood (optional AI can re-word it, but never answers it).
 - **Computer actions** verify typed and pasted text only in standard Windows edit fields;
@@ -312,9 +352,12 @@ python -m venv .venv
 
 Run from source, RUDRA keeps its data in the repository folder (`config\`, `data\`,
 `logs\`, all ignored by Git); `--project-root PATH` points it elsewhere. The only
-third-party runtime dependency is `pypdf`; everything else — the window, OCR (through
-Windows), the formula renderer, the backup format, the update check and the optional AI
-connections — uses the Python standard library and Windows' own components.
+third-party Python dependency is `pypdf`; everything else — the window, OCR (through
+Windows), the formula renderer, the microphone, the backup format, the update check and the
+optional AI connections — uses the Python standard library and Windows' own components. The
+one other addition is the offline speech recognizer (whisper.cpp, an OpenAI Whisper model and
+the Silero voice-activity model, all MIT), fetched with pinned SHA-256 hashes by
+`python windows\fetch_speech.py` into `speech\` and bundled by the build.
 [docs/BUILDING.md](docs/BUILDING.md) describes the build, the package checks and the
 installer test; [docs/DESIGN.md](docs/DESIGN.md) gives an overview of the architecture.
 
