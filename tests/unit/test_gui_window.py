@@ -530,6 +530,89 @@ def test_adding_a_document_needs_no_approval_and_then_lists_what_was_found(windo
     assert window.last.argv == ("inventory", "--json")
 
 
+def test_add_document_picker_accumulates_multiple_unique_files_and_removes_selection(window, monkeypatch):
+    from app.ui.gui import window as gui_window
+
+    first = window.project_root / "first.pdf"
+    second = window.project_root / "second.pdf"
+    first.touch()
+    second.touch()
+    selections = iter(((str(first), str(second)), (str(second),)))
+    monkeypatch.setattr(gui_window.filedialog, "askopenfilenames", lambda **_kwargs: next(selections))
+    page = window.full.pages["import"]
+    page.browse()
+    page.browse()
+    assert page.selected_documents == [first, second]
+    assert page.selection_status.cget("text") == "2 documents selected."
+    page.file_list.selection_set(0)
+    page.remove_selected()
+    assert page.selected_documents == [second]
+    page.clear_selection()
+    assert page.selected_documents == []
+    assert page.selection_status.cget("text") == "No documents selected."
+
+
+def test_batch_import_continues_after_a_bad_file_and_rebuilds_index_once(window, monkeypatch):
+    from tests.unit.pdf_fixtures import textbook_pdf, unit_module_pdf
+
+    first = window.project_root / "first.pdf"
+    invalid = window.project_root / "legacy.doc"
+    last = window.project_root / "last.pdf"
+    first.write_bytes(textbook_pdf())
+    invalid.write_bytes(b"not a supported document")
+    last.write_bytes(unit_module_pdf())
+
+    calls: list[list[str]] = []
+    real_run = commands.run
+
+    def spy(argv, project_root):
+        calls.append(list(argv))
+        return real_run(argv, project_root)
+
+    monkeypatch.setattr(commands, "run", spy)
+    page = window.full.pages["import"]
+    page.add_files((first, invalid, last))
+    assert page.run()
+    _wait(window, timeout=120)
+
+    assert calls == [
+        ["extract", str(first)], ["extract", str(invalid)], ["extract", str(last)],
+        ["index"], ["inventory", "--json"],
+    ]
+    shown = window.full.output.text_content()
+    assert "Added 2 of 3 documents." in shown
+    assert "Added 2 of 3 documents." in window.compact.output.text_content()
+    assert "first.pdf" in shown and "Added to your knowledge base." in shown
+    assert "legacy.doc" in shown and "RUDRA cannot import that kind of file." in shown
+    assert "last.pdf" in shown
+    assert page.selected_documents == [invalid]  # successful inputs are cleared; failures remain retryable
+    assert window.full.state.cget("text") == "PARTIAL · added 2 of 3"
+    window.full.output.toggle_extract_details()
+    details = window.full.output.text_content()
+    assert details.count("› python -m app index") == 1
+    assert "› python -m app extract" in details
+
+
+def test_batch_import_does_not_run_index_when_every_file_fails(window, monkeypatch):
+    missing_a = window.project_root / "missing-a.pdf"
+    missing_b = window.project_root / "missing-b.pdf"
+    calls: list[list[str]] = []
+    real_run = commands.run
+
+    def spy(argv, project_root):
+        calls.append(list(argv))
+        return real_run(argv, project_root)
+
+    monkeypatch.setattr(commands, "run", spy)
+    page = window.full.pages["import"]
+    page.add_files((missing_a, missing_b))
+    assert page.run()
+    _wait(window)
+    assert calls == [["extract", str(missing_a)], ["extract", str(missing_b)]]
+    assert "Added 0 of 2 documents." in window.full.output.text_content()
+    assert page.selected_documents == [missing_a, missing_b]
+
+
 def test_adding_a_document_does_not_run_index_when_extract_itself_fails(window, monkeypatch):
     from app.ui.gui import commands as gui_commands
 

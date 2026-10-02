@@ -1,6 +1,6 @@
 ; Inno Setup script for the RUDRA Windows installer.
 ;
-;   iscc /DAppVersion=1.0.0 installer\RUDRA.iss
+;   iscc /DAppVersion=1.1.0 installer\RUDRA.iss
 ;
 ; windows\build.py --installer runs this after building dist\RUDRA and collecting the
 ; license texts into build\licenses. The result is dist\installer\RUDRA-Setup-<version>-win64.exe.

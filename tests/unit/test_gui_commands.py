@@ -171,7 +171,7 @@ def test_display_command_is_what_a_terminal_would_run():
 
 
 def test_the_startup_summary_is_short_and_keeps_what_needs_attention():
-    stdout = ("RUDRA 1.0.0  (for Windows)\n  Project root : X\n\nAttention:\n"
+    stdout = (f"RUDRA {VERSION}  (for Windows)\n  Project root : X\n\nAttention:\n"
               "  [WARNING] RAM: Little headroom.\n          Close things.\n\nStartup complete. ...\n")
     summary = commands.startup_summary(CommandResult(("start",), 0, stdout, "", 0.1))
     assert summary.splitlines() == ["RUDRA is ready.", "Attention:", "  Memory: Little headroom."]

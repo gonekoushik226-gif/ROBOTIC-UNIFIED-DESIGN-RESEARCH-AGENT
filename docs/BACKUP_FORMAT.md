@@ -28,7 +28,7 @@ that restores it.
 {
   "format": "rudra-knowledge-backup",
   "format_version": 1,
-  "app_version": "1.0.0",
+  "app_version": "1.1.0",
   "schema_version": 6,
   "created_at": "2026-09-27T12:00:00Z",
   "components": ["database", "documents"],

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+### Added
+
+- **Add several documents in one operation.** Choose multiple files at once or add more
+  files to the selection, remove individual choices, then start one batch. RUDRA reports
+  each document separately, continues past a file it cannot read, and keeps failed files
+  selected so they can be retried. The search index and knowledge inventory are refreshed
+  after the batch.
+
 ## 1.0.0
 
 Initial public release — 2026-10-02.

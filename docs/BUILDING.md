@@ -81,7 +81,7 @@ installed. The suite takes several minutes. A few tests read one real textbook w
 ### Installer test
 
 ```powershell
-.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-1.0.0-win64.exe
+.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-1.1.0-win64.exe
 ```
 
 It installs silently for the current user into a temporary folder, runs the installed

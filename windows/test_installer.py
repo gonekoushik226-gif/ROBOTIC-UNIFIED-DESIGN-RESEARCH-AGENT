@@ -1,6 +1,6 @@
 """Install, use, upgrade and uninstall RUDRA from its installer, as a user would, in a scratch folder.
 
-    python windows\\test_installer.py dist\\installer\\RUDRA-Setup-1.0.0-win64.exe
+    python windows\\test_installer.py dist\\installer\\RUDRA-Setup-1.1.0-win64.exe
     python windows\\test_installer.py SETUP.exe --upgrade-to NEWER-SETUP.exe
 
 Everything happens under one temporary folder, which stands in for a clean user profile:

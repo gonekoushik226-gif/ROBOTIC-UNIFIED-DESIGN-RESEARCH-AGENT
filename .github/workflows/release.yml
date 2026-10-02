@@ -1,6 +1,6 @@
 name: Release
 
-# Builds, tests and publishes a DRAFT release for a version tag (v1.0.0, ...).
+# Builds, tests and publishes a DRAFT release for a version tag (v1.1.0, ...).
 # The draft is published by hand after review; only published stable releases are
 # offered by RUDRA's update notice.
 

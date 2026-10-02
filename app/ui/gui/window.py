@@ -67,6 +67,14 @@ class VoiceResult:
     uncertain: bool = False
 
 
+@dataclass(frozen=True)
+class BatchImportResult:
+    """One independent result per selected document plus the shared index/inventory."""
+
+    documents: tuple[tuple[Path, CommandResult], ...]
+    shared: tuple[CommandResult, ...]
+
+
 def window_icons(root: tk.Tk, ico: Path) -> tuple[int, ...]:
     """Windows: give the window the R icon at the system's small and large sizes.
 
@@ -714,6 +722,8 @@ class OutputView:
         self._metrics: mathrender.TkMetrics | None = None
         self._extract_results: list[CommandResult] = []
         self._extract_name: str | None = None
+        self._extract_batch: list[tuple[str, CommandResult]] = []
+        self._extract_shared: list[CommandResult] = []
         self._extract_open = False
 
     def _clear_embedded(self) -> None:
@@ -727,6 +737,8 @@ class OutputView:
     def write(self, parts: list[tuple[str, str]]) -> None:
         self.answer = None
         self._extract_results = []
+        self._extract_batch = []
+        self._extract_shared = []
         self._clear_embedded()
         self.text.configure(wrap="word" if self.compact else "none")
         self.text.configure(state="normal")
@@ -750,6 +762,8 @@ class OutputView:
         """The first thing a person sees: whether there is knowledge yet, and what to do next."""
         self.answer = None
         self._extract_results = []
+        self._extract_batch = []
+        self._extract_shared = []
         self._clear_embedded()
         self.text.configure(state="normal", wrap="word")
         self.text.delete("1.0", "end")
@@ -821,10 +835,26 @@ class OutputView:
         self.answer = None
         self._extract_results = results
         self._extract_name = self.window.pending_import_name  # read only: both views need it
+        self._extract_batch = []
+        self._extract_shared = []
+        self._extract_open = False
+        self._render_extract()
+
+    def show_extract_batch(self, documents: list[tuple[str, CommandResult]],
+                           shared: list[CommandResult]) -> None:
+        """Show a readable result for every attempted document, with shared work once."""
+        self.answer = None
+        self._extract_batch = documents
+        self._extract_shared = shared
+        self._extract_results = [result for _name, result in documents] + shared
+        self._extract_name = None
         self._extract_open = False
         self._render_extract()
 
     def _render_extract(self) -> None:
+        if self._extract_batch:
+            self._render_extract_batch()
+            return
         results = self._extract_results
         if not results:
             return
@@ -885,10 +915,89 @@ class OutputView:
         self.text.configure(state="disabled")
         self.text.see("1.0")
 
-    def _see_stored(self, document_id: str) -> None:
+    def _render_extract_batch(self) -> None:
+        successes = sum(result.ok for _name, result in self._extract_batch)
+        total = len(self._extract_batch)
+        self._clear_embedded()
+        self.text.configure(state="normal", wrap="word")
+        self.text.delete("1.0", "end")
+        if successes == total:
+            headline = f"Added {total} document{'s' if total != 1 else ''} to your knowledge base."
+            headline_tag = "a_line"
+        else:
+            headline = f"Added {successes} of {total} documents. Check the ones marked below."
+            headline_tag = "a_warn"
+        self.text.insert("end", headline + "\n", headline_tag)
+        index = next((result for result in self._extract_shared if result.argv and result.argv[0] == "index"), None)
+        listing = next((result for result in self._extract_shared if result.argv and result.argv[0] == "inventory"), None)
+        for name, extracted in self._extract_batch:
+            results = [extracted, *([index] if index is not None else []),
+                       *([listing] if listing is not None else [])]
+            summary = commands.extract_summary(results)
+            self.text.insert("end", "\n" + name + "\n", "a_request")
+            self.text.insert("end", summary.headline + "\n", "a_line" if summary.ok else "a_warn")
+            extra = []
+            if summary.pages:
+                extra.append(summary.pages + " read")
+            if summary.ocr_count:
+                extra.append(f"{summary.ocr_count} page(s) read by OCR - that text is marked uncertain")
+            if extra:
+                self.text.insert("end", " · ".join(extra) + "\n", "a_extra")
+            for line in summary.advice:
+                self.text.insert("end", line.rstrip(".") + ".\n", "a_extra")
+            if summary.ok and summary.stored:
+                self.text.insert("end", "Stored: " + ", ".join(summary.stored) + "\n", "a_extra")
+            if summary.linked:
+                self.text.insert("end", "Linked: " + summary.linked + "\n", "a_extra")
+            for line in summary.not_stored:
+                self.text.insert("end", "Not stored: " + line + "\n", "a_warn")
+            if summary.ok and summary.empty:
+                self.text.insert("end", "RUDRA found no statements it could store as knowledge; you can still "
+                                        "search this document's text.\n", "a_extra")
+            elif summary.ok and summary.ready:
+                self.text.insert("end", "You can ask about it now.\n", "a_extra")
+            elif summary.ok:
+                self.text.insert("end", "It will be searchable the next time you ask.\n", "a_extra")
+            if summary.ok and summary.document_id:
+                row = tk.Frame(self.text, bg=theme.OUTPUT_BG)
+                button = ttk.Button(row, text="See what was stored", style="Accent.TButton",
+                                     command=lambda doc_id=summary.document_id, doc_name=name:
+                                     self._see_stored(doc_id, doc_name))
+                button.pack(side="left")
+                self.embedded.append(row)
+                self.text.window_create("end", window=row, padx=self.window.px(2), pady=self.window.px(4))
+                self.text.insert("end", "\n", "a_line")
+        detail = ttk.Button(self.text, text="Hide details" if self._extract_open else "Details",
+                            command=self.toggle_extract_details)
+        self.embedded.append(detail)
+        self.text.window_create("end", window=detail, padx=self.window.px(2), pady=self.window.px(6))
+        self.text.insert("end", "\n", "a_line")
+        if self._extract_open:
+            for name, result in self._extract_batch:
+                self._write_extract_detail(name, result)
+            for result in self._extract_shared:
+                if result.argv and result.argv[0] == "inventory":
+                    continue
+                self._write_extract_detail(None, result)
+        self.text.configure(state="disabled")
+        self.text.see("1.0")
+
+    def _write_extract_detail(self, name: str | None, result: CommandResult) -> None:
+        if name:
+            self.text.insert("end", name + "\n", "a_request")
+        self.text.insert("end", f"› {commands.display_command(result.argv)}\n\n", "cmd")
+        for line in result.stdout.splitlines(keepends=True):
+            self.text.insert("end", line, "answer" if commands.is_answer_line(line) else "out")
+        if result.stderr:
+            self.text.insert("end", ("\n" if result.stdout and not result.stdout.endswith("\n") else "")
+                             + result.stderr, "log" if result.ok else "err")
+        self.text.insert("end", f"\n{'ok' if result.ok else f'exit {result.exit_code}'} · {result.meaning} "
+                         f"· {result.seconds:.2f} s\n\n", "meta")
+
+    def _see_stored(self, document_id: str, name: str | None = None) -> None:
         self.window.show(full=True)
         page = self.window.full.pages["knowledge"]
-        page.show_document(document_id, self._extract_name or document_id)
+        page.show_document(document_id, name or self._extract_name or document_id)
         self.window.full.select("knowledge")
 
     def toggle_extract_details(self) -> None:
@@ -2047,21 +2156,35 @@ class ProvenancePage(Page):
 class ImportPage(Page):
     key, title = "import", "Add document"
     heading = "Add a document"
-    description = ("Choose a PDF, Word, PowerPoint or Excel file, an e-book, a web page, a text file or a scanned "
-                   "image. RUDRA reads it, keeps a private copy, and stores what it states - with the page and the "
-                   "exact quote behind every item - so you can ask about it straight away.")
+    description = ("Choose one or more PDF, Word, PowerPoint or Excel files, e-books, web pages, text files or "
+                   "scanned images. RUDRA reads each one, keeps a private copy, and stores what it states - with "
+                   "the page and the exact quote behind every item - so you can ask about it straight away.")
 
     def build(self) -> None:
         px = self.window.px
-        self.label(self.frame, "Document").pack(anchor="w", pady=(px(8), px(4)))
+        self.pdf = tk.StringVar(master=self.window.root, value="")  # accepts a typed path for keyboard users
+        self.selected_documents: list[Path] = []
+        self.label(self.frame, "Documents").pack(anchor="w", pady=(px(8), px(4)))
+        listing = tk.Frame(self.frame, bg=theme.BG)
+        listing.pack(fill="x")
+        self.file_list = tk.Listbox(listing, height=5, selectmode="extended", exportselection=False,
+                                    bg=theme.RAISED, fg=theme.TEXT, selectbackground=theme.ACCENT_DEEP,
+                                    selectforeground=theme.TEXT, font=self.window.fonts.body,
+                                    relief="flat", highlightthickness=1, highlightbackground=theme.LINE_BRIGHT)
+        scrollbar = ttk.Scrollbar(listing, orient="vertical", command=self.file_list.yview)
+        self.file_list.configure(yscrollcommand=scrollbar.set)
+        self.file_list.pack(side="left", fill="x", expand=True)
+        scrollbar.pack(side="left", fill="y")
+        self.file_list.bind("<Delete>", lambda _event: self.remove_selected())
+        self.selection_status = self.note(self.frame, "No documents selected.")
+        self.selection_status.pack(anchor="w", pady=(px(4), 0))
         row = tk.Frame(self.frame, bg=theme.BG)
-        row.pack(fill="x")
-        self.field, self.pdf = self.entry(row, width=60)
-        self.field.pack(side="left", fill="x", expand=True)
-        self.field.bind("<Return>", lambda _event: self.run())
-        ttk.Button(row, text="Browse…", command=self.browse).pack(side="left", padx=(px(8), 0))
-        self.first = self.field
-        self.button(self.frame, "Add document", self.run, accent=True).pack(anchor="w", pady=(px(12), 0))
+        row.pack(anchor="w", pady=(px(8), 0))
+        self.button(row, "Browse…", self.browse).pack(side="left")
+        self.button(row, "Remove selected", self.remove_selected).pack(side="left", padx=(px(8), 0))
+        self.button(row, "Clear list", self.clear_selection).pack(side="left", padx=(px(8), 0))
+        self.first = self.file_list
+        self.button(self.frame, "Add document(s)", self.run, accent=True).pack(anchor="w", pady=(px(12), 0))
         self.note(self.frame, "Your original file is never changed. Scanned pages and images are read with "
                               "Windows' own text recognition, on this computer; what it reads is marked uncertain."
                   ).pack(fill="x", pady=(px(10), 0))
@@ -2090,25 +2213,115 @@ class ImportPage(Page):
         from app.documents.formats import SUPPORTED_EXTENSIONS
 
         patterns = " ".join(f"*{extension}" for extension in SUPPORTED_EXTENSIONS)
-        chosen = filedialog.askopenfilename(parent=self.window.root, title="Choose a document",
-                                            filetypes=(("Supported documents", patterns), ("PDF documents", "*.pdf"),
-                                                       ("All files", "*.*")))
+        chosen = filedialog.askopenfilenames(parent=self.window.root, title="Choose documents",
+                                             filetypes=(("Supported documents", patterns),
+                                                        ("PDF documents", "*.pdf"), ("All files", "*.*")))
         if chosen:
-            self.pdf.set(str(Path(chosen)))
+            self.add_files(chosen)
+
+    def add_files(self, paths) -> None:
+        """Append selected paths once each, preserving the chooser's order."""
+        known = {str(path.resolve()).casefold() for path in self.selected_documents}
+        for value in paths:
+            path = Path(value).expanduser()
+            key = str(path.resolve()).casefold()
+            if key not in known:
+                self.selected_documents.append(path)
+                known.add(key)
+        self._render_selection()
+
+    def remove_selected(self) -> None:
+        for index in reversed(self.file_list.curselection()):
+            del self.selected_documents[index]
+        self._render_selection()
+
+    def clear_selection(self) -> None:
+        self.selected_documents.clear()
+        self.pdf.set("")
+        self._render_selection()
+
+    def _render_selection(self) -> None:
+        self.file_list.delete(0, "end")
+        for path in self.selected_documents:
+            self.file_list.insert("end", str(path))
+        count = len(self.selected_documents)
+        self.selection_status.configure(
+            text=(f"{count} document{'s' if count != 1 else ''} selected."
+                  if count else "No documents selected.")
+        )
 
     def run(self) -> bool:
         """Adding a document is one operation from here: read it and store what it states
         (`extract`), make it searchable (`index`), then list what was found
         (`inventory`) so the person is told what was stored and what was not."""
+        paths = list(self.selected_documents)
+        if not paths and self.pdf.get().strip():  # a path may be typed instead of chosen
+            paths = [Path(self.pdf.get().strip())]
+        if not paths:
+            self.window.show_note("Choose one or more documents first.", tag="warn")
+            self.window.set_state("NOT RUN", theme.WARN)
+            return False
+        manual = self.manual.get() if self.manual_open else ""
+        if len(paths) > 1:
+            return self._run_batch(paths, manual)
         try:
-            extract_argv = commands.extract(self.pdf.get(), self.manual.get() if self.manual_open else "")
+            extract_argv = commands.extract(str(paths[0]), manual)
         except FormError as exc:
             self.window.show_note(str(exc), tag="warn")
             self.window.set_state("NOT RUN", theme.WARN)
             return False
-        self.window.pending_import_name = Path(self.pdf.get()).name if self.pdf.get().strip() else None
+        self.window.pending_import_name = paths[0].name
         return self.window.submit_sequence([extract_argv, commands.index(), commands.inventory()], label="extract",
                                            on_done=self._added, show=extract_argv)
+
+    def _run_batch(self, paths: list[Path], manual: str) -> bool:
+        try:
+            argvs = [(path, commands.extract(str(path), manual)) for path in paths]
+        except FormError as exc:
+            self.window.show_note(str(exc), tag="warn")
+            self.window.set_state("NOT RUN", theme.WARN)
+            return False
+
+        def work() -> BatchImportResult:
+            documents: list[tuple[Path, CommandResult]] = []
+            for path, argv in argvs:
+                documents.append((path, commands.run(argv, self.window.project_root)))
+            shared: list[CommandResult] = []
+            if any(result.ok for _path, result in documents):
+                indexed = commands.run(commands.index(), self.window.project_root)
+                shared.append(indexed)
+                if indexed.ok:
+                    shared.append(commands.run(commands.inventory(), self.window.project_root))
+            return BatchImportResult(tuple(documents), tuple(shared))
+
+        def done(result: object, error: BaseException | None) -> None:
+            if error is not None:
+                self.window.show_note("RUDRA hit an unexpected error while adding the documents.\n\n" + str(error),
+                                      tag="err")
+                return
+            assert isinstance(result, BatchImportResult)
+            failed_paths = [path for path, extracted in result.documents if not extracted.ok]
+            self.selected_documents = failed_paths
+            self._render_selection()
+            name_counts: dict[str, int] = {}
+            for path, _extracted in result.documents:
+                name_counts[path.name.casefold()] = name_counts.get(path.name.casefold(), 0) + 1
+            reports = [(str(path) if name_counts[path.name.casefold()] > 1 else path.name, extracted)
+                       for path, extracted in result.documents]
+            self.window.compact.output.show_extract_batch(reports, list(result.shared))
+            self.window.full.output.show_extract_batch(reports, list(result.shared))
+            self.window.last = (result.shared[-1] if result.shared else result.documents[-1][1])
+            successes = sum(extracted.ok for _path, extracted in result.documents)
+            total = len(result.documents)
+            if successes != total:
+                self.window.set_state(f"PARTIAL · added {successes} of {total}", theme.WARN)
+            elif result.shared and not result.shared[0].ok:
+                self.window.set_state("ADDED · search index needs attention", theme.WARN)
+            else:
+                self.window.set_state(f"READY · added {total} documents", theme.OK)
+            self.window.output_touched = True
+
+        return self.window.run_task("adding documents", work, done)
 
     def _added(self, results: list[CommandResult]) -> None:
         self.window.output_touched = True

@@ -115,15 +115,16 @@ as *Advanced* for when you want the detail underneath.
 
 ### Adding a document
 
-**Full window → Add document**, choose a file with **Browse…**, then **Add document**.
-RUDRA copies the document into its own store (your original is never changed), reads it,
-stores what it states and makes it searchable, so you can ask about it straight away. Pages
-without a text layer are read with Windows' own OCR when it is available. When it is done
-it tells you, in words, what it found: *what was stored* (for example "66 definitions, 524
+**Full window → Add document**, choose one or more files with **Browse…**, then select
+**Add document(s)**. Browse again to add more files to the selection; **Remove selected**
+and **Clear list** change it before processing. RUDRA copies each document into its own
+store (your originals are never changed), reads it, stores what it states and makes it
+searchable, so you can ask about it straight away. Each document is processed separately:
+if one cannot be read, RUDRA continues with the others and leaves the failed file selected
+so you can retry it. The results explain what was stored (for example "66 definitions, 524
 equations"), what was *already known* from other evidence, and what was found but *not
-stored* and why ("177 equations that looked broken - a fraction or integral split across
-lines"). **See what was stored** opens the Knowledge page for that document; the technical
-detail - document ID, page counts, issues - is one click away behind **Details**.
+stored* and why. **See what was stored** opens the Knowledge page for that document; the
+technical detail - document ID, page counts, issues - is one click away behind **Details**.
 
 ### What RUDRA knows
 
