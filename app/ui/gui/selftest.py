@@ -214,6 +214,13 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
                                   "V = 10 V")
         return pages["ask"].run()
 
+    def ask_with_template() -> bool:
+        """The selected question pattern is filled with a topic and uses the normal Ask flow."""
+        page = pages["ask"]
+        page.template.set("What is it?")
+        page.template_topic.set("resistance")
+        return page.ask_template()
+
     def import_rendered_plainly() -> tuple[bool, str]:
         # "Added to your knowledge base" alone, or "...with some extraction warnings" -
         # either is correct; this fixture is expected to raise a couple of warnings.
@@ -313,6 +320,7 @@ def steps(window: RudraWindow, pdf: Path | None) -> list[Step]:
             ("lookup", fill("lookup", mode="name", value="Resistance"), _contains("CPT-00000001")),
             ("provenance", fill("provenance", identifier="K-00000001"), _contains("Verification: VERIFIED")),
             ("ask", fill("ask", question="What is resistance?"), _contains("ANSWERED")),
+            ("question template", ask_with_template, _contains("What is resistance?", "ANSWERED")),
             ("answer only", answer_only, None),
             ("view sources", view_sources, None),
             ("formula", formula, None),

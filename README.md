@@ -73,6 +73,9 @@ the download, upgrade and uninstall.
   *"Which equations are given for resonance?"*, *"Where is Ohm's law stated?"*,
   *"Compare the definitions of power"*, *"Summarize capacitance"* — interpreted by
   deterministic rules and answered from your knowledge base.
+- **Question patterns on Ask.** Choose a common wording - *What is…?*, *How does it work?*,
+  *How is it used?* or *What are its applications?* - then enter the topic. RUDRA asks only
+  what your documents support and cites the stored evidence.
 - **Clean answers, sources on request.** The answer is shown by itself. **View Sources**
   opens where it came from: the document, the page, the quoted text, the file's
   fingerprint check and the knowledge items the answer rests on, with a button to open
@@ -142,6 +145,10 @@ Type a question in the assistant's input box or on the **Ask** page - or click t
 microphone button beside it, speak (it stops listening when you stop talking, or click it
 again), and edit the recognized words before sending - a reading the recognizer was unsure of
 is flagged **CHECK THE WORDS**, and names it gets wrong can be added under Settings > Voice.
+On the **Ask** page, you can also choose a question pattern and enter just the topic; RUDRA
+fills in the question and sends it through the same answer and source-checking flow. For
+example, choose *How is it used?* and enter *MOSFET*. If no application is recorded in your
+documents, RUDRA says so instead of guessing.
 The answer appears by itself. Lines resting on uncertain recognition are marked **Uncertain**
 with the reason, for example *"recognized by OCR from a scanned page; compare it with the
 source"*. A question that names nothing (*"summarize this section"*) is answered with what

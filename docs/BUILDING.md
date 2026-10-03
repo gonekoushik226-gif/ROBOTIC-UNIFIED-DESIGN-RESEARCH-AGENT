@@ -81,7 +81,7 @@ installed. The suite takes several minutes. A few tests read one real textbook w
 ### Installer test
 
 ```powershell
-.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-1.1.0-win64.exe
+.venv\Scripts\python.exe windows\test_installer.py dist\installer\RUDRA-Setup-1.2.0-win64.exe
 ```
 
 It installs silently for the current user into a temporary folder, runs the installed
@@ -90,6 +90,11 @@ a PDF, asks a question, has a sentence spoken into a WAV file and recognized off
 installed recogniser, runs the window's self-test with the network cut off, installs
 again over the existing installation (or a newer installer given with `--upgrade-to`),
 uninstalls, and checks that the user's data survived both.
+
+The installer test refuses to start if RUDRA is already installed for the current Windows
+user, because its checks uninstall the test installation and the installer uses the same
+per-user registration and shortcuts. Run it on a clean Windows account/profile or let the
+release workflow run it on its clean hosted runner.
 
 ## Releasing
 

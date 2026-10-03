@@ -152,6 +152,24 @@ def test_a_what_is_question_without_a_value_stays_a_knowledge_question(text):
     assert intent.intent_type == "QUERY_CONCEPT"
 
 
+@pytest.mark.parametrize(("text", "target", "rule"), [
+    ("Explain how a MOSFET works.", "MOSFET", "query.explain_how_works"),
+    ("Describe how the sampling theorem works", "sampling theorem", "query.explain_how_works"),
+    ("State Ohm's law.", "Ohm's law", "query.state_law"),
+    ("What does Ohm's law state?", "Ohm's law", "query.state_law"),
+    ("How is a MOSFET used?", "MOSFET", "query.how_used"),
+    ("What are applications of a MOSFET?", "MOSFET", "query.applications"),
+])
+def test_common_explanation_and_law_phrasings_resolve_the_subject(text, target, rule):
+    _, intent = _one(text)
+    assert intent.status is S.INTERPRETED
+    assert intent.intent_type == "QUERY_CONCEPT"
+    assert intent.target == target
+    assert intent.rule == rule
+    assert intent.requested_output == ("applications" if rule in {"query.how_used", "query.applications"}
+                                       else "explanation")
+
+
 def test_a_calculation_with_nothing_known_says_what_it_needs():
     _, intent = _one("Calculate the output voltage")
     assert intent.status is S.INCOMPLETE and any("values you know" in m for m in intent.missing)
@@ -260,7 +278,7 @@ def test_interpretation_is_deterministic_and_names_its_grammar():
     first = to_json(interpret("Open Chrome and calculate 2 * 3"))
     assert to_json(interpret("Open Chrome and calculate 2 * 3")) == first
     result = interpret("Open Chrome")
-    assert (result.grammar, result.grammar_version) == ("RUDRA request grammar", "2")  # version 2: more question shapes
+    assert (result.grammar, result.grammar_version) == ("RUDRA request grammar", "3")  # version 3: more question shapes
 
 
 def test_task_classes_are_section_95s_thirteen_plus_knowledge_reasoning():

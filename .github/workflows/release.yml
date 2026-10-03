@@ -1,6 +1,6 @@
 name: Release
 
-# Builds, tests and publishes a DRAFT release for a version tag (v1.1.0, ...).
+# Builds, tests and publishes a DRAFT release for a version tag (v1.2.0, ...).
 # The draft is published by hand after review; only published stable releases are
 # offered by RUDRA's update notice.
 
@@ -67,6 +67,8 @@ jobs:
           $files = Get-ChildItem dist/installer | Select-Object -ExpandProperty Name | Sort-Object
           $expected = @("RUDRA-Setup-$env:VERSION-win64.exe", "SHA256SUMS.txt") | Sort-Object
           if (Compare-Object $files $expected) { throw "Unexpected release files: $($files -join ', ')" }
+          $report = "docs/TEST_REPORT_$env:VERSION.md"
+          if (-not (Test-Path $report)) { throw "Missing manual test report: $report" }
           Get-Content dist/installer/SHA256SUMS.txt
           python -c "import sys; sys.path.insert(0, '.'); from pathlib import Path; from windows.build import sha256; line = Path('dist/installer/SHA256SUMS.txt').read_text().split(); assert sha256(Path('dist/installer') / line[1]) == line[0], 'checksum mismatch'"
 
@@ -79,6 +81,7 @@ jobs:
           path: |
             dist/installer/RUDRA-Setup-${{ env.VERSION }}-win64.exe
             dist/installer/SHA256SUMS.txt
+            docs/TEST_REPORT_${{ env.VERSION }}.md
           if-no-files-found: error
 
       - name: Create the draft release
@@ -87,7 +90,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
-          $assets = @("dist/installer/RUDRA-Setup-$env:VERSION-win64.exe", "dist/installer/SHA256SUMS.txt")
+          $assets = @("dist/installer/RUDRA-Setup-$env:VERSION-win64.exe", "dist/installer/SHA256SUMS.txt",
+            "docs/TEST_REPORT_$env:VERSION.md")
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber

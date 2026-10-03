@@ -40,7 +40,7 @@ from app.nlu.results import (
 )
 
 GRAMMAR_NAME = "RUDRA request grammar"
-GRAMMAR_VERSION = "2"
+GRAMMAR_VERSION = "3"
 MAX_TEXT = 2000
 
 _NUMBER = r"[-−]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
@@ -388,13 +388,25 @@ RULES: tuple[Rule, ...] = (
     _r("keyboard.paste", 2, r"^paste(?: (?:it|the clipboard))?$", lambda m: _simple("keyboard.paste", "PASTE")),
     _r("screen.screenshot", 2, r"^(?:take|capture|grab) (?:a )?screen ?shot(?: of (?P<what>.+))?$",
        lambda m: _screenshot(m["what"])),
-    # --- questions about a concept, in the ways people ask them (grammar version 2)
+    # --- questions about a concept, in the ways people ask them (grammar version 3)
     _r("query.explain_principle", 3,
        r"^(?:explain|describe)(?: to me)?(?: the)? (?:operating principle|working principle|principle of operation|"
        r"principle|working|operation|functioning|concept|basics|theory|mechanism|meaning)(?: of| behind)? (?P<x>.+)$",
        lambda m: _concept_question("query.explain_principle", m["x"], "explanation", "EXPLANATION")),
-    _r("query.how_works", 3, r"^how (?:does|do|is|are) (?P<x>.+?) (?:work|operate|function|used)$",
+    _r("query.how_used", 3, r"^how (?:is|are) (?P<x>.+?) used$",
+       lambda m: _concept_question("query.how_used", m["x"], "applications")),
+    _r("query.how_works", 3, r"^how (?:does|do|is|are) (?P<x>.+?) (?:work|operate|function)$",
        lambda m: _concept_question("query.how_works", m["x"], "explanation", "EXPLANATION")),
+    _r("query.applications", 3,
+       r"^(?:what are|list|describe)(?: the)? applications (?:of|for) (?P<x>.+)$",
+       lambda m: _concept_question("query.applications", m["x"], "applications")),
+    _r("query.explain_how_works", 3,
+       r"^(?:explain|describe)(?: to me)? how (?P<x>.+?) works?$",
+       lambda m: _concept_question("query.explain_how_works", m["x"], "explanation", "EXPLANATION")),
+    _r("query.state_law", 3,
+       r"^(?:state (?P<state_x>.+)|what does (?P<does_x>.+?) state|what do (?P<do_x>.+?) state)$",
+       lambda m: _concept_question("query.state_law", next(v for v in
+           (m["state_x"], m["does_x"], m["do_x"]) if v is not None), "explanation", "EXPLANATION")),
     _r("query.properties", 3,
        r"^(?:what|which) (?:are )?(?:the )?(?:properties|characteristics|features) (?:of|does|do) (?P<x>.+?)"
        r"(?: have)?(?: (?:are|is|do|does)(?: \w+)*?)?(?: (?:stated|given|listed|found|mentioned|there))?$",

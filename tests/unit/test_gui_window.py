@@ -105,6 +105,22 @@ def test_calculation_is_asked_for_through_ask_not_a_separate_page(window):
     assert '"status": "CALCULATED"' in result.stdout and '"displayed": "0.333333"' in result.stdout
 
 
+@pytest.mark.parametrize(("template", "expected"), [
+    ("What is it?", "What is capacitance?"),
+    ("How does it work?", "How does capacitance work?"),
+    ("How is it used?", "How is capacitance used?"),
+    ("What are its applications?", "What are applications of capacitance?"),
+])
+def test_question_templates_fill_the_topic_and_send_a_normal_ask(window, template, expected):
+    page = window.full.pages["ask"]
+    page.template.set(template)
+    page.template_topic.set(" capacitance ")
+    seen = []
+    page.run = lambda: seen.append(page.question.get()) or True
+    assert page.ask_template()
+    assert seen == [expected]
+
+
 def test_a_failing_command_shows_its_exit_and_report(window):
     window.full.pages["lookup"].value.set("Resistance")
     assert window.full.pages["lookup"].run()

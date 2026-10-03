@@ -49,9 +49,10 @@ The Start Menu also has **RUDRA Command Line** (the same functions as text comma
 
 1. Open **Full window → Add document** and add a document (PDF, Word, PowerPoint, Excel,
    EPUB, web page, text or an image).
-2. Ask a question in the assistant box, type on the **Ask** page, or click its microphone
-   button and speak — for example *"What is resistance?"*. Speech is recognized on your
-   computer, offline; it stops listening when you stop talking.
+2. Ask a question in the assistant box, type on the **Ask** page, or choose a question
+   pattern and enter a topic — for example *"What is resistance?"*. You can also click the
+   microphone button and speak. Speech is recognized on your computer, offline; it stops
+   listening when you stop talking.
 3. Use **View Sources** on an answer to see where it came from.
 4. Back up your knowledge now and then: **Full window → Settings → Back up your
    knowledge**.

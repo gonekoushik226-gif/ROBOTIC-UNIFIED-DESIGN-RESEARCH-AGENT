@@ -8,6 +8,7 @@ This is for maintainers. Users only download the installer from the Releases pag
 |---|---|
 | `RUDRA-Setup-<version>-win64.exe` | The per-user Windows installer (Inno Setup), holding the PyInstaller build of `RUDRA.exe` and `RUDRA-CLI.exe` |
 | `SHA256SUMS.txt` | The installer's SHA-256 checksum |
+| `TEST_REPORT_<version>.md` | The manual cross-topic test report for this version |
 
 The release notes are the `## <version>` section of `CHANGELOG.md`, followed by download
 notes (`windows/release_notes.py`).
@@ -20,8 +21,9 @@ compares this version with the latest published, non-prerelease GitHub release.
 
 ## Steps
 
-1. Update `VERSION` in `app/version.py` and `pyproject.toml`, and add a `## <version>`
-   section to `CHANGELOG.md`.
+1. Update `VERSION` in `app/version.py` and `pyproject.toml`, add a `## <version>`
+   section to `CHANGELOG.md`, and write `docs/TEST_REPORT_<version>.md` with the manual
+   test scope and results.
 2. Build and test locally (see [BUILDING.md](BUILDING.md)):
 
    ```powershell

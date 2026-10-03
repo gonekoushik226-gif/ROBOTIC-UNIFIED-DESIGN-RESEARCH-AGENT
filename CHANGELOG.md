@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+### Fixed
+
+- **Ask offers question patterns.** On the Ask page, choose “What is…?”, “How does it
+  work?”, “How is it used?” or “What are its applications?” and enter a topic. RUDRA fills
+  in the question and runs it through the same document-grounded Ask flow.
+- Application templates request only applications recorded in the knowledge base. If a
+  source-stated application link is missing, RUDRA says so and labels any keyword hits as
+  mentions rather than presenting them as applications.
+- **Ask understands common explanation phrasing.** “Explain how a MOSFET works,” “State
+  Ohm's law,” “What does Ohm's law state?” and application/usage questions now look up the
+  named topic instead of treating the whole sentence as its name or rejecting it. Answers
+  still come only from the user's stored documents, with their original citations.
+
 ## 1.1.0
 
 ### Added

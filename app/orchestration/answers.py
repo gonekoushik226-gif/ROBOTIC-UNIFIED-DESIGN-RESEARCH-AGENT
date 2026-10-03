@@ -31,6 +31,7 @@ _GROUPS = {
     "equations": ("Equations", "Variables"),
     "variables": ("Variables", "Equations"),
     "properties": ("Properties",),
+    "applications": ("Applications",),
     "definitions_all": ("Definitions",),
     "summary": ("Definitions", "Properties", "Equations", "Variables", "Applications", "Examples", "Prerequisites",
                 "Dependencies", "Relationships"),
@@ -172,7 +173,8 @@ def from_mentions(unknown: "Part", keyword_answer: dict, name: str, output: str 
                 break
         passages = passages[:MAX_PASSAGES]
     missing = {"equations": "No equation is linked to", "variables": "No variable is linked to",
-               "properties": "No property is stored for", "prerequisites": "No prerequisite is stored for",
+               "properties": "No property is stored for", "applications": "No application is stored for",
+               "prerequisites": "No prerequisite is stored for",
                "locations": "No stored statement defines or describes"}.get(output or "", "No definition of")
     if not shown:
         header = f"Nothing about '{name}' was stored as knowledge, but your documents mention it:"

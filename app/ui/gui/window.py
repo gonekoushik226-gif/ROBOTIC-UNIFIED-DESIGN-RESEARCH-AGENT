@@ -1816,6 +1816,24 @@ class AskPage(Page):
 
     def build(self) -> None:
         px = self.window.px
+        self.label(self.frame, "Or choose a question pattern and enter a topic").pack(
+            anchor="w", pady=(px(8), px(4)))
+        templates = {
+            "What is it?": "What is {topic}?",
+            "How does it work?": "How does {topic} work?",
+            "How is it used?": "How is {topic} used?",
+            "What are its applications?": "What are applications of {topic}?",
+        }
+        template_row = tk.Frame(self.frame, bg=theme.BG)
+        template_row.pack(fill="x")
+        self.template = tk.StringVar(master=self.window.root, value=next(iter(templates)))
+        chooser = ttk.Combobox(template_row, textvariable=self.template,
+                               values=list(templates), state="readonly", width=34)
+        chooser.pack(side="left", fill="x", expand=True)
+        self.template_topic_field, self.template_topic = self.entry(template_row, width=30)
+        self.template_topic_field.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
+        self.button(template_row, "Ask", self.ask_template, accent=True).pack(side="left", padx=(px(8), 0))
+        self._question_templates = templates
         self.label(self.frame, "Your question").pack(anchor="w", pady=(px(8), px(4)))
         row = tk.Frame(self.frame, bg=theme.BG)
         row.pack(fill="x")
@@ -1858,6 +1876,16 @@ class AskPage(Page):
         self.question.set(text)
         self.field.focus_set()
         self.field.icursor("end")
+
+    def ask_template(self) -> bool:
+        topic = self.template_topic.get().strip()
+        if not topic:
+            self.window.show_note("Enter a topic to use a question pattern.", tag="warn")
+            self.template_topic_field.focus_set()
+            return False
+        pattern = self._question_templates[self.template.get()]
+        self.question.set(pattern.format(topic=topic))
+        return self.run()
 
     def run(self) -> bool:
         return self.window.run_form(lambda: commands.ask(self.question.get(), act=self.window.act.get(),

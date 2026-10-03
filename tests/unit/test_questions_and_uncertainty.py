@@ -1,6 +1,6 @@
 """Natural questions about the user's knowledge, and uncertainty carried to the answer.
 
-The interpreter (grammar version 2) turns the ways people ask - explain, how does it
+The interpreter (grammar version 3) turns the ways people ask - explain, how does it
 work, properties, compare definitions, equations, variables, where is it stated,
 summarize, "according to my documents" - into RUDRA's own structured queries; a question
 that names nothing ("summarize this section") is INCOMPLETE, never guessed. OCR pages

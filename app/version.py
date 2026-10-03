@@ -14,7 +14,7 @@ APP_SHORT_NAME: Final = "RUDRA"
 APP_FULL_NAME: Final = "ROBOTIC UNIFIED DESIGN RESEARCH AGENT"
 
 #: Application version. 1.0.0 was the first public release.
-VERSION: Final = "1.1.0"
+VERSION: Final = "1.2.0"
 
 #: Which edition of RUDRA this is, shown beside the version.
 EDITION: Final = "for Windows"

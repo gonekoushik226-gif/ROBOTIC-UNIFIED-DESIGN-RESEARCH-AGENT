@@ -52,6 +52,18 @@ def test_not_found_is_unknown_and_insufficient_is_insufficient_information():
     assert withheld.status == "INSUFFICIENT" and withheld.answer == "Insufficient information. withheld"
 
 
+def test_an_application_question_does_not_relabel_mentions_as_an_answer():
+    unknown = answers.from_query(1, "MOSFET", "QUERY_CONCEPT", ("query",),
+                                 {"status": "FOUND", "concept": {"concepts": [], "groups": []}},
+                                 "applications")
+    keyword = {"keyword": {"term": "MOSFET", "knowledge": [{"knowledge": {
+        "id": "K-00000001", "knowledge_type": "DEFINITION", "statement": "A MOSFET is a device."},
+        "evidence": []}], "concepts": [], "pages": []}}
+    part = answers.from_mentions(unknown, keyword, "MOSFET", "applications")
+    assert part.status == "UNKNOWN"
+    assert part.answer.startswith("No application is stored for 'MOSFET'")
+
+
 def test_a_conflict_is_shown_and_not_resolved():
     conflicted = {**FOUND, "concept": {**FOUND["concept"], "conflicts": [{
         "conflict": {"id": "CON-00000001", "cause": "UNDETERMINED", "context": None},
